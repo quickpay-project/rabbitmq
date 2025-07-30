@@ -5,7 +5,7 @@ services:
     depends_on:
       - rabbitmq
     ports:
-      - "8080:8080"
+      - "3000:4000"
     environment:
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
     volumes:
