@@ -65,13 +65,35 @@ func (m Functions) Publish(w http.ResponseWriter, r *http.Request) {
 func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	errors.FailOnError(err, "Failed to readall body request")
-	rabbit := rabbitmqconnect.RabbitWithdrawMQ{Body: string(body), QueueName: "withdraw"}
+
+	// อ่าน Header
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	log.Printf(" [x] Sent Headers %s\n", headers)
+
+	rabbit := rabbitmqconnect.RabbitWithdrawMQ{Body: string(body), QueueName: "withdraw", Headers: headers}
 	rabbit.Withdraw()
 }
 
 func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	errors.FailOnError(err, "Failed to readall body request")
-	rabbit := rabbitmqconnect.RabbitDepositMQ{Body: string(body), QueueName: "deposit"}
+
+	// อ่าน Header
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	log.Printf(" [x] Sent Headers %s\n", headers)
+
+	rabbit := rabbitmqconnect.RabbitDepositMQ{Body: string(body), QueueName: "deposit", Headers: headers}
 	rabbit.Deposit()
 }
