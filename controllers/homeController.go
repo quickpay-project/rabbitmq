@@ -23,6 +23,18 @@ func (m Functions) Consume(w http.ResponseWriter, r *http.Request) {
 	rabbit.Consume()
 }
 
+func (m Functions) Conswithdraw(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintln(w, "Consume withdraw")
+	rabbit := rabbitmqconnect.RabbitMQ{QueueName: "withdraw"}
+	rabbit.Conswithdraw()
+}
+
+func (m Functions) ConsDeposit(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintln(w, "Consume deposit")
+	rabbit := rabbitmqconnect.RabbitMQ{QueueName: "deposit"}
+	rabbit.Consdeposit()
+}
+
 func (m Functions) Publish(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	errors.FailOnError(err, "Failed to readall body request")
@@ -33,13 +45,13 @@ func (m Functions) Publish(w http.ResponseWriter, r *http.Request) {
 func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	errors.FailOnError(err, "Failed to readall body request")
-	rabbit := rabbitmqconnect.RabbitWithdrawMQ{Body: string(body), QueueName: "defaultqueuue"}
+	rabbit := rabbitmqconnect.RabbitWithdrawMQ{Body: string(body), QueueName: "withdraw"}
 	rabbit.Withdraw()
 }
 
 func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	errors.FailOnError(err, "Failed to readall body request")
-	rabbit := rabbitmqconnect.RabbitDepositMQ{Body: string(body), QueueName: "defaultqueuue"}
+	rabbit := rabbitmqconnect.RabbitDepositMQ{Body: string(body), QueueName: "deposit"}
 	rabbit.Deposit()
 }

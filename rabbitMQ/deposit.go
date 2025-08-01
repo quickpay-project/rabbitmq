@@ -36,10 +36,10 @@ func (r *RabbitDepositMQ) Deposit() {
 
 	body := r.Body
 	err = ch.PublishWithContext(ctx,
-		"",        // exchange
-		"deposit", // routing key
-		false,     // mandatory
-		false,     // immediate
+		"",     // exchange
+		q.Name, // routing key
+		false,  // mandatory
+		false,  // immediate
 		amqp.Publishing{
 			ContentType: "text/plain",
 			Body:        []byte(body),
