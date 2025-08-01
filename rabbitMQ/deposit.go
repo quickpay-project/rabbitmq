@@ -36,8 +36,8 @@ func (r *RabbitDepositMQ) Deposit() {
 
 	body := r.Body
 	err = ch.PublishWithContext(ctx,
-		"deposit", // exchange
-		q.Name,    // routing key
+		"",        // exchange
+		"deposit", // routing key
 		false,     // mandatory
 		false,     // immediate
 		amqp.Publishing{

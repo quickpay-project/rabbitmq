@@ -36,8 +36,8 @@ func (r *RabbitWithdrawMQ) Withdraw() {
 
 	body := r.Body
 	err = ch.PublishWithContext(ctx,
-		"withdraw", // exchange
-		q.Name,     // routing key
+		"",         // exchange
+		"withdraw", // routing key
 		false,      // mandatory
 		false,      // immediate
 		amqp.Publishing{
