@@ -54,4 +54,5 @@ func (r *RabbitDepositMQ) Deposit() {
 		})
 	errors.FailOnError(err, "Failed data deposit")
 	log.Printf(" [x] Sent %s\n", body)
+	log.Printf(" [x] Sent Headers %s\n", headers)
 }

@@ -54,4 +54,5 @@ func (r *RabbitWithdrawMQ) Withdraw() {
 		})
 	errors.FailOnError(err, "Failed data withdraw")
 	log.Printf(" [x] Sent %s\n", body)
+	log.Printf(" [x] Sent Headers %s\n", headers)
 }

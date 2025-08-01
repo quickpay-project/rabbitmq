@@ -39,7 +39,7 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) erro
 	return nil
 }
 
-func (r *RabbitMQ) Conswithdraw() {
+func (r *RabbitWithdrawMQ) Conswithdraw() {
 	conn, ch := ConnectMQ()
 	defer CloseMQ(conn, ch)
 

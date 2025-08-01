@@ -39,7 +39,7 @@ func sendToExternalDepositAPI(data []byte, headers map[string]interface{}) error
 	return nil
 }
 
-func (r *RabbitMQ) Consdeposit() {
+func (r *RabbitDepositMQ) Consdeposit() {
 	conn, ch := ConnectMQ()
 	defer CloseMQ(conn, ch)
 
