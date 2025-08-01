@@ -2,7 +2,6 @@ package rabbitmqconnect
 
 import (
 	"context"
-	"log"
 	"time"
 
 	errors "github.com/celalsahinaltinisik/exceptions"
@@ -53,6 +52,6 @@ func (r *RabbitWithdrawMQ) Withdraw() {
 			Headers:     headers, // ใส่ Header ตรงนี้
 		})
 	errors.FailOnError(err, "Failed data withdraw")
-	log.Printf(" [x] Sent %s\n", body)
-	log.Printf(" [x] Sent Headers %s\n", headers)
+	// log.Printf(" [x] Sent %s\n", body)
+	// log.Printf(" [x] Sent Headers %s\n", headers)
 }
