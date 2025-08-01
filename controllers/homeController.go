@@ -34,6 +34,8 @@ func (m Functions) Conswithdraw(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	log.Printf(" [x] Sent Headers %s\n", headers)
+
 	rabbit := rabbitmqconnect.RabbitWithdrawMQ{QueueName: "withdraw", Headers: headers}
 	rabbit.Conswithdraw()
 }
