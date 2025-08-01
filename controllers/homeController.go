@@ -25,13 +25,31 @@ func (m Functions) Consume(w http.ResponseWriter, r *http.Request) {
 
 func (m Functions) Conswithdraw(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Consume withdraw")
-	rabbit := rabbitmqconnect.RabbitWithdrawMQ{QueueName: "withdraw"}
+
+	// อ่าน Header
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	rabbit := rabbitmqconnect.RabbitWithdrawMQ{QueueName: "withdraw", Headers: headers}
 	rabbit.Conswithdraw()
 }
 
 func (m Functions) Consdeposit(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Consume deposit")
-	rabbit := rabbitmqconnect.RabbitDepositMQ{QueueName: "deposit"}
+
+	// อ่าน Header
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	rabbit := rabbitmqconnect.RabbitDepositMQ{QueueName: "deposit", Headers: headers}
 	rabbit.Consdeposit()
 }
 
