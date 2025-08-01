@@ -23,7 +23,7 @@ func urls(s map[string]string, str string, method string) (bool, string) {
 
 func Routeing() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		routings := map[string]string{"/home": "GET", "/publish": "POST", "/consume": "GET"}
+		routings := map[string]string{"/home": "GET", "/publish": "POST", "/withdraw": "POST", "/deposit": "POST", "/consume": "GET"}
 		log.Println(r.URL.Path, r.Method)
 		check, funcName := urls(routings, r.URL.Path, r.Method)
 		log.Println(funcName)
