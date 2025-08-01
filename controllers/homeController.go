@@ -29,7 +29,7 @@ func (m Functions) Conswithdraw(w http.ResponseWriter, r *http.Request) {
 	rabbit.Conswithdraw()
 }
 
-func (m Functions) ConsDeposit(w http.ResponseWriter, r *http.Request) {
+func (m Functions) Consdeposit(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Consume deposit")
 	rabbit := rabbitmqconnect.RabbitMQ{QueueName: "deposit"}
 	rabbit.Consdeposit()

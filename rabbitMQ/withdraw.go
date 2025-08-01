@@ -12,6 +12,7 @@ import (
 type RabbitWithdrawMQ struct {
 	Body      string
 	QueueName string
+	Headers   map[string]string // เพิ่มตรงนี้เพื่อส่ง Header
 }
 
 func (r *RabbitWithdrawMQ) Withdraw() {
@@ -34,6 +35,12 @@ func (r *RabbitWithdrawMQ) Withdraw() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// แปลง headers map[string]string → amqp.Table
+	headers := amqp.Table{}
+	for key, value := range r.Headers {
+		headers[key] = value
+	}
+
 	body := r.Body
 	err = ch.PublishWithContext(ctx,
 		"",     // exchange
@@ -43,6 +50,7 @@ func (r *RabbitWithdrawMQ) Withdraw() {
 		amqp.Publishing{
 			ContentType: "text/plain",
 			Body:        []byte(body),
+			Headers:     headers, // ใส่ Header ตรงนี้
 		})
 	errors.FailOnError(err, "Failed data withdraw")
 	log.Printf(" [x] Sent %s\n", body)

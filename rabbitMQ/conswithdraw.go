@@ -8,12 +8,27 @@ import (
 	errors "github.com/celalsahinaltinisik/exceptions"
 )
 
-func sendToExternalWithdrawAPI(data []byte) error {
-	// กำหนด URL ปลายทาง
+func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) error {
 	apiURL := "https://webhook.site/3fef26b2-eb5e-4ae4-95a5-e01dd9890336"
 
-	// POST ไปยัง API
-	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(data))
+	// สร้าง HTTP request
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
+	if err != nil {
+		log.Println("❌ Failed to create HTTP request:", err)
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// เพิ่ม custom headers จาก RabbitMQ
+	for key, value := range headers {
+		if strVal, ok := value.(string); ok {
+			req.Header.Set(key, strVal)
+		}
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
 		log.Println("❌ Failed to send to external API:", err)
 		return err
@@ -56,8 +71,14 @@ func (r *RabbitMQ) Conswithdraw() {
 		for d := range msgs {
 			log.Printf("📩 Withdraw รับ: %s", d.Body)
 
+			// ดึง headers จาก RabbitMQ
+			headers := map[string]interface{}{}
+			for key, val := range d.Headers {
+				headers[key] = val
+			}
+
 			// ส่งออก API
-			err := sendToExternalWithdrawAPI(d.Body)
+			err := sendToExternalWithdrawAPI(d.Body, headers)
 			if err != nil {
 				log.Println("❌  Withdraw ส่งไม่สำเร็จ:", err)
 				_ = d.Nack(false, true) // แจ้ง RabbitMQ ว่าข้อความนี้ยังส่งไม่สำเร็จ
