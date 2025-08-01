@@ -3,7 +3,6 @@
 import (
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 
 	errors "github.com/celalsahinaltinisik/exceptions"
@@ -14,7 +13,6 @@ type Functions struct{}
 
 func (m Functions) Home(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "home")
-	log.Println(r.Body)
 }
 
 func (m Functions) Consume(w http.ResponseWriter, r *http.Request) {
@@ -33,8 +31,6 @@ func (m Functions) Conswithdraw(w http.ResponseWriter, r *http.Request) {
 			headers[key] = values[0]
 		}
 	}
-
-	log.Printf(" [x] Sent Headers %s\n", headers)
 
 	rabbit := rabbitmqconnect.RabbitWithdrawMQ{QueueName: "withdraw", Headers: headers}
 	rabbit.Conswithdraw()
@@ -74,8 +70,6 @@ func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf(" [x] Sent Headers %s\n", headers)
-
 	rabbit := rabbitmqconnect.RabbitWithdrawMQ{Body: string(body), QueueName: "withdraw", Headers: headers}
 	rabbit.Withdraw()
 }
@@ -83,7 +77,6 @@ func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
 func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	errors.FailOnError(err, "Failed to readall body request")
-
 	// อ่าน Header
 	headers := make(map[string]string)
 	for key, values := range r.Header {
@@ -91,9 +84,6 @@ func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
 			headers[key] = values[0]
 		}
 	}
-
-	log.Printf(" [x] Sent Headers %s\n", headers)
-
 	rabbit := rabbitmqconnect.RabbitDepositMQ{Body: string(body), QueueName: "deposit", Headers: headers}
 	rabbit.Deposit()
 }
