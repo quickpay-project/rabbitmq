@@ -2,46 +2,139 @@ package rabbitmqconnect
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
-	errors "github.com/celalsahinaltinisik/exceptions"
+	_ "github.com/lib/pq"
 )
 
-func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) error {
-	apiURL := os.Getenv("WITHDRAW_URL")
+var db *sql.DB
 
-	// สร้าง HTTP request
+// Call InitDB early in your main() or package setup
+func InitDB() error {
+
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		return errors.New("DATABASE_URL is not set")
+	}
+
+	var err error
+	db, err = sql.Open("postgres", dsn)
+	if err != nil {
+		return err
+	}
+
+	// adjust for your environment
+	db.SetMaxOpenConns(20)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(time.Minute * 10)
+
+	// Ping to verify connection
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return db.PingContext(ctx)
+}
+
+// insertWithdrawLog inserts a log row and returns the inserted id (or error)
+func insertWithdrawLog(queueName string, body []byte, headers map[string]interface{}, httpStatus int, httpRespBody string, statusStr string, attempts int, errMsg string) (int64, error) {
+	if db == nil {
+		return 0, errors.New("db not initialized")
+	}
+
+	headersJSON, _ := json.Marshal(headers)
+	// attempt to store body as JSONB; if not JSON, store as text inside json
+	var msgJSON json.RawMessage
+	if json.Valid(body) {
+		msgJSON = body
+	} else {
+		// wrap as json: {"raw": "..."}
+		wrapped, _ := json.Marshal(map[string]string{"raw": string(body)})
+		msgJSON = wrapped
+	}
+
+	query := `
+INSERT INTO withdraw_logs 
+(queue_name, message_body, headers, http_status, http_response_body, status, attempts, error_message, created_at, updated_at)
+VALUES ($1, $2::jsonb, $3::jsonb, $4, $5, $6, $7, $8, now(), now())
+RETURNING id;
+`
+
+	var id int64
+	err := db.QueryRow(query, queueName, msgJSON, headersJSON, httpStatus, httpRespBody, statusStr, attempts, errMsg).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// sendToExternalWithdrawAPI sends the payload to external API and returns (statusCode, responseBody, error)
+func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int, string, error) {
+	apiURL := os.Getenv("WITHDRAW_URL")
+	if apiURL == "" {
+		return 0, "", errors.New("WITHDRAW_URL not set")
+	}
+
+	// create HTTP request
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
 	if err != nil {
 		log.Println("❌ Failed to create HTTP request:", err)
-		return err
+		return 0, "", err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 
-	// เพิ่ม custom headers จาก RabbitMQ
+	// Add custom headers (convert possible non-string values to JSON string)
 	for key, value := range headers {
-		if strVal, ok := value.(string); ok {
-			req.Header.Set(key, strVal)
+		switch v := value.(type) {
+		case string:
+			req.Header.Set(key, v)
+		case []byte:
+			req.Header.Set(key, string(v))
+		default:
+			// marshal other types to JSON
+			b, _ := json.Marshal(v)
+			req.Header.Set(key, string(b))
 		}
 	}
 
-	client := &http.Client{}
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Println("❌ Failed to send to external API:", err)
-		return err
+		return 0, "", err
 	}
 	defer resp.Body.Close()
 
-	log.Println("✅ Data sent to API:", resp.Status)
-	return nil
+	// read response body
+	respBytes, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		log.Println("⚠️ failed to read response body:", readErr)
+		// still return status code and partial info
+		return resp.StatusCode, "", readErr
+	}
+
+	bodyStr := string(respBytes)
+	log.Println("✅ Data sent to API:", resp.Status, " response length:", len(respBytes))
+
+	return resp.StatusCode, bodyStr, nil
 }
 
+// Conswithdraw consumes messages, forwards to external API and logs to DB
 func (r *RabbitWithdrawMQ) Conswithdraw() {
 	conn, ch := ConnectMQ()
+	if conn == nil || ch == nil {
+		log.Println("Failed to get RabbitMQ connection/channel")
+		return
+	}
 	defer CloseMQ(conn, ch)
 
 	q, err := ch.QueueDeclare(
@@ -52,45 +145,67 @@ func (r *RabbitWithdrawMQ) Conswithdraw() {
 		false,       // no-wait
 		nil,         // arguments
 	)
-	errors.FailOnError(err, "Failed to declare a withdraw queue")
+	if err != nil {
+		log.Println("Failed to declare withdraw queue:", err)
+		return
+	}
 
 	msgs, err := ch.Consume(
-		q.Name, // queue
-		"",     // consumer
-		false,  // manual ack
-		false,  // exclusive
-		false,  // no-local
-		false,  // no-wait
-		nil,    // args
+		q.Name,
+		"",
+		false, // manual ack
+		false,
+		false,
+		false,
+		nil,
 	)
-
-	errors.FailOnError(err, "Failed to register a withdraw consumer")
+	if err != nil {
+		log.Println("Failed to register withdraw consumer:", err)
+		return
+	}
 
 	k := make(chan bool)
 
 	go func() {
 		for d := range msgs {
-			log.Printf("📩 Withdraw รับ: %s", d.Body)
+			log.Printf("📩 Withdraw received: %s", d.Body)
 
-			// ดึง headers จาก RabbitMQ
+			// collect headers
 			headers := map[string]interface{}{}
-			for key, val := range d.Headers {
-				headers[key] = val
+			if d.Headers != nil {
+				for key, val := range d.Headers {
+					headers[key] = val
+				}
 			}
 
-			// ส่งออก API
-			err := sendToExternalWithdrawAPI(d.Body, headers)
-			if err != nil {
-				log.Println("❌  Withdraw ส่งไม่สำเร็จ:", err)
-				_ = d.Nack(false, true) // แจ้ง RabbitMQ ว่าข้อความนี้ยังส่งไม่สำเร็จ
+			// Try sending to external API
+			httpStatus, respBody, sendErr := sendToExternalWithdrawAPI(d.Body, headers)
+
+			if sendErr != nil {
+				// Log failure with attempts = 1 (or read from headers if you track attempts)
+				_, insertErr := insertWithdrawLog(q.Name, d.Body, headers, httpStatus, respBody, "failed", 1, sendErr.Error())
+				if insertErr != nil {
+					log.Println("❌ Failed to insert withdraw log:", insertErr)
+				}
+				log.Println("❌ Withdraw forward failed:", sendErr)
+				// Nack with requeue true (so message can be retried)
+				if nackErr := d.Nack(false, true); nackErr != nil {
+					log.Println("⚠️ Failed to Nack message:", nackErr)
+				}
 			} else {
-				log.Println("✅ Withdraw ส่งสำเร็จ")
-				_ = d.Ack(false) // สำเร็จ
+				// success, insert a sent log
+				_, insertErr := insertWithdrawLog(q.Name, d.Body, headers, httpStatus, respBody, "sent", 1, "")
+				if insertErr != nil {
+					log.Println("❌ Failed to insert withdraw log:", insertErr)
+				}
+				log.Println("✅ Withdraw forwarded successfully, acking message")
+				if ackErr := d.Ack(false); ackErr != nil {
+					log.Println("⚠️ Failed to Ack message:", ackErr)
+				}
 			}
 		}
-
 	}()
 
-	log.Printf(" [*] Waiting for messages. To exit press CTRL+C")
+	log.Printf(" [*] Waiting for withdraw messages. To exit press CTRL+C")
 	<-k
 }
