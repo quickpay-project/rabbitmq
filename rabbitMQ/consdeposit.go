@@ -2,8 +2,6 @@ package rabbitmqconnect
 
 import (
 	"bytes"
-	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,33 +12,6 @@ import (
 
 	_ "github.com/lib/pq"
 )
-
-var dbd *sql.DB
-
-// Call InitDB early in your main() or package setup
-func InitDBD() error {
-
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		return errors.New("DATABASE_URL is not set")
-	}
-
-	var err error
-	dbd, err = sql.Open("postgres", dsn)
-	if err != nil {
-		return err
-	}
-
-	// adjust for your environment
-	dbd.SetMaxOpenConns(20)
-	dbd.SetMaxIdleConns(5)
-	dbd.SetConnMaxLifetime(time.Minute * 10)
-
-	// Ping to verify connection
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return dbd.PingContext(ctx)
-}
 
 // insertDepositLog inserts a log row and returns the inserted id (or error)
 func insertDepositLog(queueName string, body []byte, headers map[string]interface{}, httpStatus int, httpRespBody string, statusStr string, attempts int, errMsg string) (int64, error) {
@@ -133,7 +104,7 @@ func (r *RabbitDepositMQ) Consdeposit() {
 	conn, ch := ConnectMQ()
 
 	// check db connect
-	if err := InitDBD(); err != nil {
+	if err := InitDB(); err != nil {
 		log.Fatalf("❌ Failed to init DB: %v", err)
 	}
 
