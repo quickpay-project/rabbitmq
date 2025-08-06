@@ -131,6 +131,13 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 // Conswithdraw consumes messages, forwards to external API and logs to DB
 func (r *RabbitWithdrawMQ) Conswithdraw() {
 	conn, ch := ConnectMQ()
+
+	// check db connect
+	if err := InitDB(); err != nil {
+		log.Fatalf("❌ Failed to init DB: %v", err)
+	}
+
+	// check labbitMQ connect
 	if conn == nil || ch == nil {
 		log.Println("Failed to get RabbitMQ connection/channel")
 		return
