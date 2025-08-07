@@ -13,6 +13,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 var db *sql.DB
@@ -113,6 +114,7 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 }
 
 // Conswithdraw handles message consumption, forwarding, and logging
+/*
 func (r *RabbitWithdrawMQ) Conswithdraw() {
 	// 🟢 Connect DB
 	if err := InitDB(); err != nil {
@@ -173,5 +175,82 @@ func (r *RabbitWithdrawMQ) Conswithdraw() {
 			_, _ = insertWithdrawLog(q.Name, d.Body, headers, httpStatus, respBody, "sent", attempt, "", txnID)
 			_ = d.Ack(false)
 		}
+	}
+}
+*/
+
+func (r *RabbitWithdrawMQ) Conswithdraw() {
+	// Init DB
+	if err := InitDB(); err != nil {
+		log.Fatalf("❌ InitDB failed: %v", err)
+	}
+	defer db.Close()
+
+	conn, ch := ConnectMQ()
+	defer CloseMQ(conn, ch)
+
+	// Queue RPC
+	q, err := ch.QueueDeclare(
+		r.QueueName, // เช่น: "withdraw_rpc_queue"
+		false, false, false, false, nil,
+	)
+	if err != nil {
+		log.Fatalf("❌ Failed to declare queue: %v", err)
+	}
+
+	msgs, err := ch.Consume(
+		q.Name, "", false, false, false, false, nil,
+	)
+	if err != nil {
+		log.Fatalf("❌ Failed to consume: %v", err)
+	}
+
+	log.Printf("📡 [*] Awaiting RPC requests on queue: %s", q.Name)
+	for d := range msgs {
+		headers := make(map[string]interface{})
+		for k, v := range d.Headers {
+			headers[k] = v
+		}
+
+		statusCode, respBody, txnID, err := sendToExternalWithdrawAPI(d.Body, headers)
+		response := map[string]interface{}{
+			"status_code":    statusCode,
+			"body":           respBody,
+			"transaction_id": txnID,
+		}
+
+		var errMsg string
+		resultStatus := "sent"
+		if err != nil || statusCode >= 500 {
+			errMsg = err.Error()
+			resultStatus = "failed"
+		}
+
+		_, _ = insertWithdrawLog(r.QueueName, d.Body, headers, statusCode, respBody, resultStatus, 1, errMsg, txnID)
+
+		// ส่ง response กลับไป queue ที่ระบุใน ReplyTo
+		resBody, _ := json.Marshal(response)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		err = ch.PublishWithContext(
+			ctx,
+			"",        // default exchange
+			d.ReplyTo, // reply queue
+			false,
+			false,
+			amqp.Publishing{
+				ContentType:   "application/json",
+				CorrelationId: d.CorrelationId,
+				Body:          resBody,
+			},
+		)
+		if err != nil {
+			log.Printf("❌ Failed to send RPC reply: %v", err)
+		} else {
+			log.Printf("✅ RPC reply sent, txnID: %s", txnID)
+		}
+
+		_ = d.Ack(false)
 	}
 }
