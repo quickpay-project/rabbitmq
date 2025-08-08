@@ -83,7 +83,7 @@ func (m Functions) Withdraw(r *http.Request) (string, error) {
 	log.Printf("📥 RPC Response: %s", response)
 	if err != nil {
 		log.Fatalf("RPC call failed: %v", err)
-		return "", err
+		return "error", err
 	}
 
 	return string(response), nil
