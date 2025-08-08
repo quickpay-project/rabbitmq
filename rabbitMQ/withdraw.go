@@ -1,11 +1,8 @@
 package rabbitmqconnect
 
 import (
-	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"errors"
-	"time"
+	"encoding/json"
+	"log"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -16,84 +13,86 @@ type RabbitWithdrawMQ struct {
 	Headers   map[string]string
 }
 
-// genCorrelationID สร้าง UUID/Random string
-func genCorrelationID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return hex.EncodeToString(b)
-}
+func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
+	if err := InitDB(); err != nil {
+		log.Fatalf("❌ InitDB failed: %v", err)
+	}
+	defer db.Close()
 
-func (r *RabbitWithdrawMQ) WithdrawRPC() ([]byte, error) {
 	conn, ch := ConnectMQ()
 	defer CloseMQ(conn, ch)
 
-	// ✅ Step 1: ประกาศ reply queue ชั่วคราว
-	replyQueue, err := ch.QueueDeclare(
-		"",    // random name (exclusive)
-		false, // durable
-		true,  // auto-delete
-		true,  // exclusive
-		false, // no-wait
+	q, err := ch.QueueDeclare(
+		r.QueueName,
+		false,
+		false,
+		false,
+		false,
 		nil,
 	)
 	if err != nil {
-		return nil, err
+		log.Fatalf("❌ Queue declare error: %v", err)
 	}
 
-	// ✅ Step 2: สร้าง consumer ที่รอฟัง reply
 	msgs, err := ch.Consume(
-		replyQueue.Name,
+		q.Name,
 		"",
-		true,  // auto-ack
-		false, // exclusive
+		false, // manual ack
+		false,
 		false,
 		false,
 		nil,
 	)
 	if err != nil {
-		return nil, err
+		log.Fatalf("❌ Consume error: %v", err)
 	}
 
-	// ✅ Step 3: สร้าง CorrelationId
-	corrID := genCorrelationID()
-
-	// ✅ Step 4: แปลง headers map[string]string → amqp.Table
-	headers := amqp.Table{}
-	for key, value := range r.Headers {
-		headers[key] = value
-	}
-
-	// ✅ Step 5: Publish message พร้อม ReplyTo และ CorrelationId
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	err = ch.PublishWithContext(ctx,
-		"",          // default exchange
-		r.QueueName, // routing key
-		false,
-		false,
-		amqp.Publishing{
-			ContentType:   "application/json",
-			Body:          []byte(r.Body),
-			Headers:       headers,
-			CorrelationId: corrID,
-			ReplyTo:       replyQueue.Name,
-		})
-	if err != nil {
-		return nil, err
-	}
-
-	// ✅ Step 6: รอฟัง response เฉพาะ corrID ที่ส่งไป
-	timeout := time.After(10 * time.Second) // ปรับตามความเหมาะสม
-	for {
-		select {
-		case msg := <-msgs:
-			if msg.CorrelationId == corrID {
-				return msg.Body, nil
-			}
-		case <-timeout:
-			return nil, errors.New("RPC timeout waiting for response")
+	for d := range msgs {
+		headers := map[string]interface{}{}
+		for k, v := range d.Headers {
+			headers[k] = v
 		}
+
+		// ทำงานตามปกติ
+		httpStatus, respBody, txnID, sendErr := sendToExternalWithdrawAPI(d.Body, headers)
+
+		status := "sent"
+		errMsg := ""
+		if sendErr != nil || httpStatus >= 500 {
+			status = "failed"
+			if sendErr != nil {
+				errMsg = sendErr.Error()
+			}
+		}
+
+		_, _ = insertWithdrawLog(q.Name, d.Body, headers, httpStatus, respBody, status, 1, errMsg, txnID)
+
+		// ส่ง response กลับไปหา client
+		response := map[string]interface{}{
+			"http_status": httpStatus,
+			"body":        respBody,
+			"status":      status,
+			"error":       errMsg,
+			"txn_id":      txnID,
+		}
+		respJSON, _ := json.Marshal(response)
+
+		err = ch.Publish(
+			"",        // default exchange
+			d.ReplyTo, // reply queue จาก client
+			false,
+			false,
+			amqp.Publishing{
+				ContentType:   "application/json",
+				CorrelationId: d.CorrelationId, // ต้องใช้ค่าจาก client
+				Body:          respJSON,
+			},
+		)
+		if err != nil {
+			log.Printf("❌ Failed to send RPC response: %v", err)
+		}
+
+		_ = d.Ack(false)
 	}
 }
 
