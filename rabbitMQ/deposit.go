@@ -75,7 +75,7 @@ func (r *RabbitDepositMQ) DepositRPC() ([]byte, error) {
 	}
 
 	// ✅ Step 6: รอฟัง response เฉพาะ corrID ที่ส่งไป
-	timeout := time.After(30 * time.Second) // ปรับตามความเหมาะสม
+	timeout := time.After(90 * time.Second) // ปรับตามความเหมาะสม
 	for {
 		select {
 		case msg := <-msgs:
