@@ -82,7 +82,7 @@ func (m Functions) Withdraw(r *http.Request) (string, error) {
 	response, err := rabbit.WithdrawRPC()
 	log.Printf("📥 RPC Response: %s", response)
 	if err != nil {
-		log.Fatalf("RPC call failed: %v", err)
+		log.Printf("RPC call failed: %v", err)
 		return "error", err
 	}
 
