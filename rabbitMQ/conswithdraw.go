@@ -178,110 +178,85 @@ func (r *RabbitWithdrawMQ) Conswithdraw() {
 	}
 }
 */
-
-func (r *RabbitWithdrawMQ) Conswithdraw() {
-	// 🟢 Connect DB
+func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 	if err := InitDB(); err != nil {
 		log.Fatalf("❌ InitDB failed: %v", err)
 	}
-	defer func() {
-		if db != nil {
-			if err := db.Close(); err != nil {
-				log.Printf("⚠️ Failed to close DB: %v", err)
-			} else {
-				log.Println("✅ Database connection closed.")
-			}
-		}
-	}()
+	defer db.Close()
 
-	// 🟢 Connect RabbitMQ
 	conn, ch := ConnectMQ()
-	if conn == nil || ch == nil {
-		log.Println("❌ Failed to connect to RabbitMQ")
-		return
-	}
 	defer CloseMQ(conn, ch)
 
-	// ✅ ประกาศ queue
-	q, err := ch.QueueDeclare(r.QueueName, false, false, false, false, nil)
+	q, err := ch.QueueDeclare(
+		r.QueueName,
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
 	if err != nil {
 		log.Fatalf("❌ Queue declare error: %v", err)
 	}
 
-	// ✅ Consume message
-	msgs, err := ch.Consume(q.Name, "", false, false, false, false, nil)
+	msgs, err := ch.Consume(
+		q.Name,
+		"",
+		false, // manual ack
+		false,
+		false,
+		false,
+		nil,
+	)
 	if err != nil {
 		log.Fatalf("❌ Consume error: %v", err)
 	}
 
-	log.Printf("[*] Waiting for messages from queue: %s", q.Name)
 	for d := range msgs {
 		headers := map[string]interface{}{}
 		for k, v := range d.Headers {
 			headers[k] = v
 		}
 
-		attempt := 1
-		if val, ok := headers["x-attempts"].(int32); ok {
-			attempt = int(val)
-		}
-
-		if !json.Valid(d.Body) {
-			log.Println("❌ Invalid JSON, rejecting")
-			_ = d.Nack(false, false)
-			continue
-		}
-
-		// ✅ ส่งไป API
+		// ทำงานตามปกติ
 		httpStatus, respBody, txnID, sendErr := sendToExternalWithdrawAPI(d.Body, headers)
 
-		var replyData []byte
+		status := "sent"
+		errMsg := ""
 		if sendErr != nil || httpStatus >= 500 {
-			_, _ = insertWithdrawLog(q.Name, d.Body, headers, httpStatus, respBody, "failed", attempt, sendErr.Error(), txnID)
-
-			// ✅ ตอบกลับ Client พร้อม error
-			replyData, _ = json.Marshal(map[string]interface{}{
-				"status":  "failed",
-				"error":   sendErr.Error(),
-				"txn_id":  txnID,
-				"code":    httpStatus,
-				"payload": string(d.Body),
-			})
-
-			_ = d.Nack(false, true)
-		} else {
-			_, _ = insertWithdrawLog(q.Name, d.Body, headers, httpStatus, respBody, "sent", attempt, "", txnID)
-
-			// ✅ ตอบกลับ Client พร้อม success
-			replyData, _ = json.Marshal(map[string]interface{}{
-				"status":  "success",
-				"txn_id":  txnID,
-				"code":    httpStatus,
-				"payload": string(d.Body),
-				"result":  respBody,
-			})
-
-			_ = d.Ack(false)
-		}
-
-		// ✅ ถ้ามี ReplyTo → ส่งกลับไปหา Client
-		if d.ReplyTo != "" && d.CorrelationId != "" {
-			err = ch.PublishWithContext(
-				context.Background(),
-				"",        // default exchange
-				d.ReplyTo, // ส่งไป queue ของ client
-				false,
-				false,
-				amqp.Publishing{
-					ContentType:   "application/json",
-					Body:          replyData,
-					CorrelationId: d.CorrelationId, // ต้องส่งกลับเหมือนเดิม
-				})
-			if err != nil {
-				log.Printf("⚠️ Failed to send reply: %v", err)
-			} else {
-				log.Printf("📨 Sent reply to %s (corrID=%s)", d.ReplyTo, d.CorrelationId)
+			status = "failed"
+			if sendErr != nil {
+				errMsg = sendErr.Error()
 			}
 		}
+
+		_, _ = insertWithdrawLog(q.Name, d.Body, headers, httpStatus, respBody, status, 1, errMsg, txnID)
+
+		// ส่ง response กลับไปหา client
+		response := map[string]interface{}{
+			"http_status": httpStatus,
+			"body":        respBody,
+			"status":      status,
+			"error":       errMsg,
+			"txn_id":      txnID,
+		}
+		respJSON, _ := json.Marshal(response)
+
+		err = ch.Publish(
+			"",        // default exchange
+			d.ReplyTo, // reply queue จาก client
+			false,
+			false,
+			amqp.Publishing{
+				ContentType:   "application/json",
+				CorrelationId: d.CorrelationId, // ต้องใช้ค่าจาก client
+				Body:          respJSON,
+			},
+		)
+		if err != nil {
+			log.Printf("❌ Failed to send RPC response: %v", err)
+		}
+
+		_ = d.Ack(false)
 	}
 }
