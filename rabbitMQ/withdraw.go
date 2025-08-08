@@ -84,7 +84,7 @@ func (r *RabbitWithdrawMQ) WithdrawRPC() ([]byte, error) {
 	}
 
 	// ✅ Step 6: รอฟัง response เฉพาะ corrID ที่ส่งไป
-	timeout := time.After(10 * time.Second) // ปรับตามความเหมาะสม
+	timeout := time.After(30 * time.Second) // ปรับตามความเหมาะสม
 	for {
 		select {
 		case msg := <-msgs:
