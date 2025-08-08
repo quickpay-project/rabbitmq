@@ -59,7 +59,7 @@ func (m Functions) Publish(w http.ResponseWriter, r *http.Request) {
 	rabbit.Puplish()
 }
 
-func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
+func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) (string, error) {
 
 	body, err := io.ReadAll(r.Body)
 	errors.FailOnError(err, "Failed to readall body request")
@@ -77,8 +77,11 @@ func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
 	response, err := rabbit.WithdrawRPC()
 	if err != nil {
 		log.Fatalf("RPC call failed: %v", err)
+		return "error: ", err
 	}
 	log.Printf("📥 RPC Response: %s", response)
+
+	return string(response), nil
 
 }
 
