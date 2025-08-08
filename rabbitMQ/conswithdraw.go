@@ -113,6 +113,9 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		txnID = val
 	}
 
+	log.Println("respBody")
+	log.Println(bodyStr)
+
 	return resp.StatusCode, bodyStr, txnID, nil
 }
 
@@ -243,6 +246,7 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 			"error":       errMsg,
 			"txn_id":      txnID,
 		}
+
 		respJSON, _ := json.Marshal(response)
 
 		err = ch.Publish(

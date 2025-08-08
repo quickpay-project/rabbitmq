@@ -61,8 +61,6 @@ func (m Functions) Publish(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
 	body, err := io.ReadAll(r.Body)
 	errors.FailOnError(err, "Failed to readall body request")
 
