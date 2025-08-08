@@ -59,10 +59,11 @@ func (m Functions) Publish(w http.ResponseWriter, r *http.Request) {
 	rabbit.Puplish()
 }
 
-func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
-
+func (m Functions) Withdraw(r *http.Request) (string, error) {
 	body, err := io.ReadAll(r.Body)
-	errors.FailOnError(err, "Failed to readall body request")
+	if err != nil {
+		return "", err
+	}
 
 	// อ่าน Header
 	headers := make(map[string]string)
@@ -72,14 +73,18 @@ func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rabbit := rabbitmqconnect.RabbitWithdrawMQ{Body: string(body), QueueName: "withdraw", Headers: headers}
+	rabbit := rabbitmqconnect.RabbitWithdrawMQ{
+		Body:      string(body),
+		QueueName: "withdraw",
+		Headers:   headers,
+	}
 
 	response, err := rabbit.WithdrawRPC()
 	if err != nil {
-		log.Fatalf("RPC call failed: %v", err)
+		return "", err
 	}
-	log.Printf("📥 RPC Response: %s", response)
 
+	return string(response), nil
 }
 
 func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
