@@ -34,7 +34,7 @@ func (m Functions) Conswithdraw(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rabbit := rabbitmqconnect.RabbitWithdrawMQ{QueueName: "withdraw", Headers: headers}
-	rabbit.Conswithdraw()
+	rabbit.ConswithdrawRPC() // ใช้ RPC consumer
 }
 
 func (m Functions) Consdeposit(w http.ResponseWriter, r *http.Request) {
