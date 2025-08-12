@@ -86,7 +86,7 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 			log.Printf("Attempt %d: Failed to create request: %v\n", attempt, err)
 			return 0, "", "", err
 		}
-		req.Header.Set("Content-Type", "application/json")
+		//req.Header.Set("Content-Type", "application/json")
 		for k, v := range headers {
 			switch val := v.(type) {
 			case string:
