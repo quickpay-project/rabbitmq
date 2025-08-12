@@ -91,24 +91,6 @@ RETURNING id;`
 }
 
 // sendToExternalWithdrawAPI sends the payload to external API and returns status, response body, and error
-import (
-	"bytes"
-	"compress/gzip"
-	"context"
-	"database/sql"
-	"encoding/json"
-	"errors"
-	"io"
-	"log"
-	"net/http"
-	"os"
-	"strings"
-	"time"
-
-	_ "github.com/lib/pq"
-)
-
-// sendToExternalWithdrawAPI sends the payload to external API and returns status, response body, and error
 func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int, string, string, error) {
 	apiURL := os.Getenv("WITHDRAW_URL")
 	log.Println("WITHDRAW_URL:", apiURL)
