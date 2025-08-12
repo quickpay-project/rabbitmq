@@ -91,6 +91,24 @@ RETURNING id;`
 }
 
 // sendToExternalWithdrawAPI sends the payload to external API and returns status, response body, and error
+import (
+	"bytes"
+	"compress/gzip"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	_ "github.com/lib/pq"
+)
+
+// sendToExternalWithdrawAPI sends the payload to external API and returns status, response body, and error
 func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int, string, string, error) {
 	apiURL := os.Getenv("WITHDRAW_URL")
 	log.Println("WITHDRAW_URL:", apiURL)
@@ -102,6 +120,7 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	var statusCode int
 	var bodyStr string
 	var txnID string
+	var err error
 
 	for attempt := 1; attempt <= 3; attempt++ {
 		req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
@@ -109,12 +128,9 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 			log.Printf("Attempt %d: Failed to create request: %v\n", attempt, err)
 			return 0, "", "", err
 		}
-
-		// ✅ เพิ่ม Accept-Encoding เพื่อรองรับ gzip
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept-Encoding", "gzip")
+		req.Header.Set("Accept-Encoding", "gzip") // ✅ บอกว่าเรารับ gzip ได้
 
-		// ใส่ headers จาก message
 		for k, v := range headers {
 			switch val := v.(type) {
 			case string:
@@ -137,21 +153,22 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 			time.Sleep(2 * time.Second)
 			continue
 		}
+
 		defer resp.Body.Close()
 
-		// ✅ ถ้า response เป็น gzip → คลายก่อน
-		var reader io.Reader = resp.Body
+		var respBodyReader io.Reader = resp.Body
+		// ✅ ถ้า response เป็น gzip ให้คลายก่อน
 		if strings.Contains(resp.Header.Get("Content-Encoding"), "gzip") {
-			gzipReader, err := gzip.NewReader(resp.Body)
-			if err != nil {
-				log.Printf("Attempt %d: Failed to create gzip reader: %v\n", attempt, err)
-				return resp.StatusCode, "", "", err
+			gzReader, gzErr := gzip.NewReader(resp.Body)
+			if gzErr != nil {
+				log.Printf("Attempt %d: Failed to create gzip reader: %v\n", attempt, gzErr)
+				return resp.StatusCode, "", "", gzErr
 			}
-			defer gzipReader.Close()
-			reader = gzipReader
+			defer gzReader.Close()
+			respBodyReader = gzReader
 		}
 
-		respBytes, err := io.ReadAll(reader)
+		respBytes, err := io.ReadAll(respBodyReader)
 		if err != nil {
 			log.Printf("Attempt %d: Failed to read response body: %v\n", attempt, err)
 			if attempt == 3 {
@@ -161,19 +178,11 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 			continue
 		}
 
-		// ✅ ถอด JSON escape UTF-8
-		var parsed map[string]interface{}
-		if json.Unmarshal(respBytes, &parsed) == nil {
-			if pretty, err := json.MarshalIndent(parsed, "", "  "); err == nil {
-				bodyStr = string(pretty)
-			} else {
-				bodyStr = string(respBytes)
-			}
-		} else {
-			bodyStr = string(respBytes)
-		}
-
+		bodyStr = string(respBytes)
 		statusCode = resp.StatusCode
+
+		var parsed map[string]interface{}
+		_ = json.Unmarshal(respBytes, &parsed)
 		if val, ok := parsed["transaction_id"].(string); ok {
 			txnID = val
 		}
@@ -188,7 +197,7 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		}
 	}
 
-	return statusCode, bodyStr, txnID, nil
+	return statusCode, bodyStr, txnID, err
 }
 
 // Conswithdraw handles message consumption, forwarding, and logging
