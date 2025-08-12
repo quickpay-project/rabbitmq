@@ -2,6 +2,7 @@ package rabbitmqconnect
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -41,19 +43,41 @@ func InitDB() error {
 }
 
 // insertWithdrawLog logs the message and response to the database
-func insertWithdrawLog(queueName string, body []byte, headers map[string]interface{}, httpStatus int, httpRespBody string, statusStr string, attempts int, errMsg string, txnID string) (int64, error) {
+func insertWithdrawLog(queueName string, body []byte, headers map[string]interface{},
+	httpStatus int, httpRespBody string, statusStr string, attempts int, errMsg string, txnID string) (int64, error) {
+
 	if db == nil {
 		return 0, errors.New("db not initialized")
 	}
 
-	headersJSON, _ := json.Marshal(headers)
+	// ✅ ทำให้ body สวยงามก่อนเก็บ
 	var msgJSON json.RawMessage
 	if json.Valid(body) {
-		msgJSON = body
+		var pretty bytes.Buffer
+		if err := json.Indent(&pretty, body, "", "  "); err == nil {
+			msgJSON = pretty.Bytes()
+		} else {
+			msgJSON = body
+		}
 	} else {
 		wrapped, _ := json.Marshal(map[string]string{"raw": string(body)})
 		msgJSON = wrapped
 	}
+
+	// ✅ ทำให้ httpRespBody เป็น JSON สวยงามถ้าทำได้
+	var respPretty string
+	var parsed map[string]interface{}
+	if json.Unmarshal([]byte(httpRespBody), &parsed) == nil {
+		if prettyBytes, err := json.MarshalIndent(parsed, "", "  "); err == nil {
+			respPretty = string(prettyBytes)
+		} else {
+			respPretty = httpRespBody
+		}
+	} else {
+		respPretty = httpRespBody
+	}
+
+	headersJSON, _ := json.Marshal(headers)
 
 	query := `
 INSERT INTO withdraw_logs 
@@ -62,7 +86,7 @@ VALUES ($1, $2::jsonb, $3::jsonb, $4, $5, $6, $7, $8, $9, now(), now())
 RETURNING id;`
 
 	var id int64
-	err := db.QueryRow(query, queueName, msgJSON, headersJSON, httpStatus, httpRespBody, statusStr, attempts, errMsg, txnID).Scan(&id)
+	err := db.QueryRow(query, queueName, msgJSON, headersJSON, httpStatus, respPretty, statusStr, attempts, errMsg, txnID).Scan(&id)
 	return id, err
 }
 
@@ -78,7 +102,6 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	var statusCode int
 	var bodyStr string
 	var txnID string
-	var err error
 
 	for attempt := 1; attempt <= 3; attempt++ {
 		req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
@@ -86,7 +109,12 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 			log.Printf("Attempt %d: Failed to create request: %v\n", attempt, err)
 			return 0, "", "", err
 		}
-		//req.Header.Set("Content-Type", "application/json")
+
+		// ✅ เพิ่ม Accept-Encoding เพื่อรองรับ gzip
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept-Encoding", "gzip")
+
+		// ใส่ headers จาก message
 		for k, v := range headers {
 			switch val := v.(type) {
 			case string:
@@ -106,12 +134,24 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 			if attempt == 3 {
 				return 0, "", "", err
 			}
-			time.Sleep(2 * time.Second) // รอเล็กน้อยก่อนส่งซ้ำ
+			time.Sleep(2 * time.Second)
 			continue
 		}
-
 		defer resp.Body.Close()
-		respBytes, err := io.ReadAll(resp.Body)
+
+		// ✅ ถ้า response เป็น gzip → คลายก่อน
+		var reader io.Reader = resp.Body
+		if strings.Contains(resp.Header.Get("Content-Encoding"), "gzip") {
+			gzipReader, err := gzip.NewReader(resp.Body)
+			if err != nil {
+				log.Printf("Attempt %d: Failed to create gzip reader: %v\n", attempt, err)
+				return resp.StatusCode, "", "", err
+			}
+			defer gzipReader.Close()
+			reader = gzipReader
+		}
+
+		respBytes, err := io.ReadAll(reader)
 		if err != nil {
 			log.Printf("Attempt %d: Failed to read response body: %v\n", attempt, err)
 			if attempt == 3 {
@@ -121,32 +161,34 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 			continue
 		}
 
-		bodyStr = string(respBytes)
-		statusCode = resp.StatusCode
-
+		// ✅ ถอด JSON escape UTF-8
 		var parsed map[string]interface{}
-		_ = json.Unmarshal(respBytes, &parsed)
+		if json.Unmarshal(respBytes, &parsed) == nil {
+			if pretty, err := json.MarshalIndent(parsed, "", "  "); err == nil {
+				bodyStr = string(pretty)
+			} else {
+				bodyStr = string(respBytes)
+			}
+		} else {
+			bodyStr = string(respBytes)
+		}
+
+		statusCode = resp.StatusCode
 		if val, ok := parsed["transaction_id"].(string); ok {
 			txnID = val
 		}
 
 		log.Printf("Attempt %d: Response status: %d, body: %s\n", attempt, statusCode, bodyStr)
 
-		// ถ้าส่งสำเร็จ (HTTP 200) ก็หยุดส่งซ้ำ
 		if statusCode == http.StatusOK {
 			break
 		} else {
 			log.Printf("Attempt %d: Received non-200 status, retrying...\n", attempt)
-			time.Sleep(2 * time.Second) // รอเล็กน้อยก่อนส่งซ้ำ
+			time.Sleep(2 * time.Second)
 		}
 	}
 
-	// ถ้าส่งแล้วไม่ใช่ 200 (ยังคงไม่สำเร็จ) ก็ส่งของอีกครั้งเพื่อบันทึก logs
-	if statusCode != http.StatusOK {
-		log.Printf("Failed to send after retries, final status: %d, body: %s\n", statusCode, bodyStr)
-	}
-
-	return statusCode, bodyStr, txnID, err
+	return statusCode, bodyStr, txnID, nil
 }
 
 // Conswithdraw handles message consumption, forwarding, and logging
