@@ -69,54 +69,84 @@ RETURNING id;`
 // sendToExternalWithdrawAPI sends the payload to external API and returns status, response body, and error
 func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int, string, string, error) {
 	apiURL := os.Getenv("WITHDRAW_URL")
-	log.Println("WITHDRAW_URL")
-	log.Println(apiURL)
+	log.Println("WITHDRAW_URL:", apiURL)
 
 	if apiURL == "" {
 		return 0, "", "", errors.New("WITHDRAW_URL not set")
 	}
 
-	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
-	if err != nil {
-		return 0, "", "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	for k, v := range headers {
-		switch val := v.(type) {
-		case string:
-			req.Header.Set(k, val)
-		case []byte:
-			req.Header.Set(k, string(val))
-		default:
-			b, _ := json.Marshal(val)
-			req.Header.Set(k, string(b))
+	var statusCode int
+	var bodyStr string
+	var txnID string
+	var err error
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
+		if err != nil {
+			log.Printf("Attempt %d: Failed to create request: %v\n", attempt, err)
+			return 0, "", "", err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		for k, v := range headers {
+			switch val := v.(type) {
+			case string:
+				req.Header.Set(k, val)
+			case []byte:
+				req.Header.Set(k, string(val))
+			default:
+				b, _ := json.Marshal(val)
+				req.Header.Set(k, string(b))
+			}
+		}
+
+		client := &http.Client{Timeout: 15 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("Attempt %d: HTTP request error: %v\n", attempt, err)
+			if attempt == 3 {
+				return 0, "", "", err
+			}
+			time.Sleep(2 * time.Second) // รอเล็กน้อยก่อนส่งซ้ำ
+			continue
+		}
+
+		defer resp.Body.Close()
+		respBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("Attempt %d: Failed to read response body: %v\n", attempt, err)
+			if attempt == 3 {
+				return resp.StatusCode, "", "", err
+			}
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		bodyStr = string(respBytes)
+		statusCode = resp.StatusCode
+
+		var parsed map[string]interface{}
+		_ = json.Unmarshal(respBytes, &parsed)
+		if val, ok := parsed["transaction_id"].(string); ok {
+			txnID = val
+		}
+
+		log.Printf("Attempt %d: Response status: %d, body: %s\n", attempt, statusCode, bodyStr)
+
+		// ถ้าส่งสำเร็จ (HTTP 200) ก็หยุดส่งซ้ำ
+		if statusCode == http.StatusOK {
+			break
+		} else {
+			log.Printf("Attempt %d: Received non-200 status, retrying...\n", attempt)
+			time.Sleep(2 * time.Second) // รอเล็กน้อยก่อนส่งซ้ำ
 		}
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, "", "", err
-	}
-	defer resp.Body.Close()
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return resp.StatusCode, "", "", err
+	// ถ้าส่งแล้วไม่ใช่ 200 (ยังคงไม่สำเร็จ) ก็ส่งของอีกครั้งเพื่อบันทึก logs
+	if statusCode != http.StatusOK {
+		log.Printf("Failed to send after retries, final status: %d, body: %s\n", statusCode, bodyStr)
 	}
 
-	bodyStr := string(respBytes)
-
-	var parsed map[string]interface{}
-	_ = json.Unmarshal(respBytes, &parsed)
-	txnID := ""
-	if val, ok := parsed["transaction_id"].(string); ok {
-		txnID = val
-	}
-
-	log.Println("respBody")
-	log.Println(bodyStr)
-
-	return resp.StatusCode, bodyStr, txnID, nil
+	return statusCode, bodyStr, txnID, err
 }
 
 // Conswithdraw handles message consumption, forwarding, and logging
