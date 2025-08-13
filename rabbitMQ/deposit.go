@@ -2,6 +2,8 @@ package rabbitmqconnect
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"time"
 
@@ -14,53 +16,43 @@ type RabbitDepositMQ struct {
 	Headers   map[string]string
 }
 
+// genCorrelationID สร้าง UUID/Random string
+func genCorrelationDepositID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// ========== RPC CLIENT ==========
 func (r *RabbitDepositMQ) DepositRPC() ([]byte, error) {
 	conn, ch := ConnectMQ()
 	defer CloseMQ(conn, ch)
 
-	// ✅ Step 1: ประกาศ reply queue ชั่วคราว
 	replyQueue, err := ch.QueueDeclare(
-		"",    // random name (exclusive)
-		false, // durable
-		true,  // auto-delete
-		true,  // exclusive
-		false, // no-wait
-		nil,
+		"", false, true, true, false, nil,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	// ✅ Step 2: สร้าง consumer ที่รอฟัง reply
-	msgs, err := ch.Consume(
-		replyQueue.Name,
-		"",
-		true,  // auto-ack
-		false, // exclusive
-		false,
-		false,
-		nil,
-	)
+	msgs, err := ch.Consume(replyQueue.Name, "", true, false, false, false, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// ✅ Step 3: สร้าง CorrelationId
-	corrID := genCorrelationID()
+	corrID := genCorrelationDepositID()
 
-	// ✅ Step 4: แปลง headers map[string]string → amqp.Table
 	headers := amqp.Table{}
 	for key, value := range r.Headers {
 		headers[key] = value
 	}
 
-	// ✅ Step 5: Publish message พร้อม ReplyTo และ CorrelationId
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	err = ch.PublishWithContext(ctx,
-		"",          // default exchange
-		r.QueueName, // routing key
+		"",
+		r.QueueName,
 		false,
 		false,
 		amqp.Publishing{
@@ -74,8 +66,7 @@ func (r *RabbitDepositMQ) DepositRPC() ([]byte, error) {
 		return nil, err
 	}
 
-	// ✅ Step 6: รอฟัง response เฉพาะ corrID ที่ส่งไป
-	timeout := time.After(90 * time.Second) // ปรับตามความเหมาะสม
+	timeout := time.After(90 * time.Second)
 	for {
 		select {
 		case msg := <-msgs:

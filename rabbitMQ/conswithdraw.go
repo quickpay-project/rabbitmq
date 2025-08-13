@@ -3,7 +3,6 @@ package rabbitmqconnect
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,70 +15,33 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-var db *sql.DB
-
-type DepositRequest struct {
+type WithdrawRequest struct {
 	Amount          float64 `json:"amount"`
 	MID             string  `json:"mid"`
 	CustomerOrderID string  `json:"customer_order_id"`
 	CallbackURL     string  `json:"callback_url"`
 }
 
-type DepositResponse struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Data    struct {
-		Order struct {
-			OperatorOrderID string      `json:"operator_order_id"`
-			CustomerOrderID string      `json:"customer_order_id"`
-			QRType          string      `json:"qr_type"`
-			Amount          float64     `json:"amount"`
-			AccountNumber   string      `json:"account_number"`
-			AccountName     string      `json:"account_name"`
-			TotalQRCode     int         `json:"total_qr_code"`
-			QRDetails       interface{} `json:"qr_details"`
-			BankCode        string      `json:"bank_code"`
-			CallbackURL     interface{} `json:"callback_url"`
-		} `json:"order"`
-		Details []struct {
-			TransactionID   string      `json:"transaction_id"`
-			QRString        string      `json:"qr_string"`
-			Amount          float64     `json:"amount"`
-			NetAmount       float64     `json:"net_amount"`
-			CreatedAt       string      `json:"created_at"`
-			ExpiredAt       string      `json:"expired_at"`
-			ImageURL        string      `json:"image_url"`
-			BankCode        string      `json:"bank_code"`
-			AccountName     string      `json:"account_name"`
-			AccountNumber   string      `json:"account_number"`
-			CustomerOrderID interface{} `json:"customer_order_id"`
-			UpdatedAt       interface{} `json:"updated_at"`
-			MdrAmount       interface{} `json:"mdr_amount"`
-			FeeAmount       interface{} `json:"fee_amount"`
-			VATAmount       interface{} `json:"vat_amount"`
-			WHTAmount       interface{} `json:"wht_amount"`
-		} `json:"details"`
-	} `json:"data"`
-}
-
-// ===== DB INIT =====
-func InitDB() error {
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		return errors.New("DATABASE_URL is not set")
-	}
-	var err error
-	db, err = sql.Open("postgres", dsn)
-	if err != nil {
-		return err
-	}
-	db.SetMaxOpenConns(20)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(time.Minute * 10)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return db.PingContext(ctx)
+type WithdrawResponse struct {
+	Order struct {
+		Cost            float64 `json:"Cost"`
+		Amount          float64 `json:"amount"`
+		BankCode        string  `json:"bank_code"`
+		BankName        string  `json:"bank_name"`
+		TotalOrder      int     `json:"total_order"`
+		AccountName     string  `json:"account_name"`
+		WithdrawType    string  `json:"withdraw_type"`
+		AccountNumber   string  `json:"account_number"`
+		WithdrawDetails any     `json:"withdraw_details"`
+		CustomerOrderID string  `json:"customer_order_id"`
+		OperatorOrderID string  `json:"operator_order_id"`
+	} `json:"order"`
+	Details []struct {
+		Amount        float64 `json:"amount"`
+		CreatedAt     string  `json:"created_at"`
+		WithdrawID    string  `json:"withdraw_id"`
+		TransactionID string  `json:"transaction_id"`
+	} `json:"details"`
 }
 
 // ===== INSERT LOG =====
@@ -155,47 +117,14 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		log.Fatal(err)
 	}
 
-	var depositResp DepositResponse
-	if err := json.Unmarshal(respBytes, &depositResp); err != nil {
+	var withdrawResp WithdrawResponse
+	if err := json.Unmarshal(respBytes, &withdrawResp); err != nil {
 		log.Fatal("Cannot parse response:", err)
 	}
 
-	// แสดงข้อมูล response
-	log.Printf("HTTP Status: %d", resp.StatusCode)
-	log.Printf("Message: %s", depositResp.Message)
-	if len(depositResp.Data.Details) > 0 {
-		log.Printf("Transaction ID: %s", depositResp.Data.Details[0].TransactionID)
-		log.Printf("QR String: %s", depositResp.Data.Details[0].QRString)
-	}
-
-	/*
-	   	client := &http.Client{Timeout: 30 * time.Second}
-	   	resp, err := client.Do(req)
-	   	if err != nil {
-	   		return 0, "", "", nil, err
-	   	}
-	   	defer resp.Body.Close()
-
-	   	respBytes, err := io.ReadAll(resp.Body)
-	   	if err != nil {
-	   		return resp.StatusCode, "", "", nil, err
-	   	}
-	   /*
-	   	respBody := string(respBytes)
-	   	log.Printf("📥 Response body: %s", respBody)
-
-
-
-	   	// parse JSON ตามรูปแบบที่ปลายทางให้มา
-	   	var depositResp DepositResponse
-	   	if err := json.Unmarshal(respBytes, &depositResp); err != nil {
-	   		// ถ้า parse ไม่ได้ ให้ส่ง body กลับไปให้เห็น raw และ error
-	   		return resp.StatusCode, respBody, "", nil, err
-	   	}
-	*/
 	// รวบรวม txn IDs
-	txnIDs := make([]string, 0, len(depositResp.Data.Details))
-	for _, d := range depositResp.Data.Details {
+	txnIDs := make([]string, 0, len(withdrawResp.Data.Details))
+	for _, d := range withdrawResp.Data.Details {
 		if d.TransactionID != "" {
 			txnIDs = append(txnIDs, d.TransactionID)
 		}
@@ -206,7 +135,7 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	}
 
 	// แปลง struct -> JSON string สำหรับ return
-	respJSON, err := json.Marshal(depositResp)
+	respJSON, err := json.Marshal(withdrawResp)
 	if err != nil {
 		return resp.StatusCode, string(respBytes), "", nil, err
 	}

@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 
-	errors "github.com/celalsahinaltinisik/exceptions"
 	rabbitmqconnect "github.com/celalsahinaltinisik/rabbitMQ"
 )
 
@@ -172,11 +171,8 @@ func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
 
-	body, err := io.ReadAll(r.Body)
-	errors.FailOnError(err, "Failed to readall body request")
-
-	// อ่าน Header
 	headers := make(map[string]string)
 	for key, values := range r.Header {
 		if len(values) > 0 {
@@ -184,12 +180,18 @@ func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rabbit := rabbitmqconnect.RabbitDepositMQ{Body: string(body), QueueName: "deposit", Headers: headers}
+	rabbit := rabbitmqconnect.RabbitDepositMQ{
+		Body:      string(body),
+		QueueName: "deposit",
+		Headers:   headers,
+	}
 
 	response, err := rabbit.DepositRPC()
 	if err != nil {
-		log.Fatalf("RPC call failed: %v", err)
+		http.Error(w, err.Error(), http.StatusGatewayTimeout)
+		return
 	}
-	log.Printf("📥 RPC Response: %s", response)
 
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(response)
 }
