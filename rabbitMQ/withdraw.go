@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -24,7 +23,8 @@ func genCorrelationID() string {
 	return hex.EncodeToString(b)
 }
 
-func (r *RabbitWithdrawMQ) WithdrawRPC() (map[string]interface{}, error) {
+// ========== RPC CLIENT ==========
+func (r *RabbitWithdrawMQ) WithdrawRPC() ([]byte, error) {
 	conn, ch := ConnectMQ()
 	defer CloseMQ(conn, ch)
 
@@ -43,15 +43,18 @@ func (r *RabbitWithdrawMQ) WithdrawRPC() (map[string]interface{}, error) {
 	corrID := genCorrelationID()
 
 	headers := amqp.Table{}
-	for k, v := range r.Headers {
-		headers[k] = v
+	for key, value := range r.Headers {
+		headers[key] = value
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	err = ch.PublishWithContext(ctx,
-		"", r.QueueName, false, false,
+		"",
+		r.QueueName,
+		false,
+		false,
 		amqp.Publishing{
 			ContentType:   "application/json",
 			Body:          []byte(r.Body),
@@ -68,15 +71,10 @@ func (r *RabbitWithdrawMQ) WithdrawRPC() (map[string]interface{}, error) {
 		select {
 		case msg := <-msgs:
 			if msg.CorrelationId == corrID {
-				var result map[string]interface{}
-				err := json.Unmarshal(msg.Body, &result)
-				if err != nil {
-					return nil, err
-				}
-				return result, nil
+				return msg.Body, nil
 			}
 		case <-timeout:
-			return nil, errors.New("RPC timeout")
+			return nil, errors.New("RPC timeout waiting for response")
 		}
 	}
 }

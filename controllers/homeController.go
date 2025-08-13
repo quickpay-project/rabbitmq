@@ -1,7 +1,6 @@
 ﻿package controller
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -61,10 +60,8 @@ func (m Functions) Publish(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(r.Body)
-	errors.FailOnError(err, "Failed to readall body request")
+	body, _ := io.ReadAll(r.Body)
 
-	// อ่าน Header
 	headers := make(map[string]string)
 	for key, values := range r.Header {
 		if len(values) > 0 {
@@ -72,17 +69,20 @@ func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rabbit := rabbitmqconnect.RabbitWithdrawMQ{Body: string(body), QueueName: "withdraw", Headers: headers}
+	rabbit := rabbitmqconnect.RabbitWithdrawMQ{
+		Body:      string(body),
+		QueueName: "withdraw",
+		Headers:   headers,
+	}
 
 	response, err := rabbit.WithdrawRPC()
 	if err != nil {
-		log.Fatalf("RPC call failed: %v", err)
-		//return "error: ", err
-		json.NewEncoder(w).Encode(err)
+		http.Error(w, err.Error(), http.StatusGatewayTimeout)
+		return
 	}
-	log.Printf("📥 RPC Response: %s", response)
-	//return string(response), nil
-	json.NewEncoder(w).Encode(response)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(response)
 }
 
 func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
