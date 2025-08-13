@@ -5,24 +5,24 @@ services:
     build: .
     container_name: golang-app
     depends_on:
-      rabbitmq:
-        condition: service_healthy
+      - rabbitmq
     ports:
       - "4000:4001"
+    env_file:
+      - .env
     environment:
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
-      - WITHDRAW_URL=http://your-withdraw-api
-      - DATABASE_URL=postgres://user:pass@postgres:5432/dbname?sslmode=disable
     volumes:
       - .:/app
     working_dir: /app
+    command: go run main.go
 
   rabbitmq:
     image: rabbitmq:3-management
     container_name: rabbitmq
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "5672:5672"   # AMQP protocol
+      - "15672:15672" # Management UI
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
@@ -31,19 +31,3 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
-
-  postgres:
-    image: postgres:15-alpine
-    container_name: postgres
-    environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: pass
-      POSTGRES_DB: dbname
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
-volumes:
-  pgdata:

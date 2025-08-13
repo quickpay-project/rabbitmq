@@ -1,17 +1,16 @@
 #!/bin/sh
-# รอ RabbitMQ ให้พร้อมก่อนรันแอป
+# wait-for-rabbitmq.sh
 
-host="$1"
-shift
-cmd="$@"
+set -e
 
-echo "Waiting for $host..."
+host="${RABBITMQ_HOST:-rabbitmq}"
+port="${RABBITMQ_PORT:-5672}"
 
-until nc -z -v -w30 $host 5672
-do
-  echo "Waiting for RabbitMQ..."
-  sleep 2
+echo "⏳ Waiting for RabbitMQ at $host:$port..."
+
+while ! nc -z "$host" "$port"; do
+  sleep 1
 done
 
-echo "$host is up, executing command: $cmd"
-exec $cmd
+echo "✅ RabbitMQ is up - executing command"
+exec "$@"
