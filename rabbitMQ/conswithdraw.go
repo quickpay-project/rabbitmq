@@ -90,15 +90,16 @@ func decodeBody(bodyStr string) ([]byte, error) {
 }
 
 // sendToExternalWithdrawAPI ส่ง request, decode body, log, ดึง transaction_id ทุกตัว
-func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int, string, []string, error) {
+// คืนค่า txnIDs []string และ transaction ตัวแรก txnID string สำหรับ insertWithdrawLog
+func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int, string, string, []string, error) {
 	apiURL := os.Getenv("WITHDRAW_URL")
 	if apiURL == "" {
-		return 0, "", nil, errors.New("WITHDRAW_URL not set")
+		return 0, "", "", nil, errors.New("WITHDRAW_URL not set")
 	}
 
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
 	if err != nil {
-		return 0, "", nil, err
+		return 0, "", "", nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range headers {
@@ -116,13 +117,13 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, "", nil, err
+		return 0, "", "", nil, err
 	}
 	defer resp.Body.Close()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return resp.StatusCode, "", nil, err
+		return resp.StatusCode, "", "", nil, err
 	}
 
 	outerBodyStr := string(respBytes)
@@ -131,13 +132,13 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	// parse outer JSON
 	var outer map[string]interface{}
 	if err := json.Unmarshal(respBytes, &outer); err != nil {
-		return resp.StatusCode, outerBodyStr, nil, err
+		return resp.StatusCode, outerBodyStr, "", nil, err
 	}
 
 	bodyStr, _ := outer["body"].(string)
 	decoded, err := decodeBody(bodyStr)
 	if err != nil {
-		return resp.StatusCode, outerBodyStr, nil, err
+		return resp.StatusCode, outerBodyStr, "", nil, err
 	}
 
 	innerBodyStr := string(decoded)
@@ -146,7 +147,7 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	// parse inner JSON
 	var inner map[string]interface{}
 	if err := json.Unmarshal(decoded, &inner); err != nil {
-		return resp.StatusCode, innerBodyStr, nil, err
+		return resp.StatusCode, innerBodyStr, "", nil, err
 	}
 
 	// ดึง transaction_id ทุกตัวจาก details array
@@ -163,7 +164,13 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		}
 	}
 
-	return resp.StatusCode, innerBodyStr, txnIDs, nil
+	// transaction ตัวแรก สำหรับ insertWithdrawLog
+	firstTxnID := ""
+	if len(txnIDs) > 0 {
+		firstTxnID = txnIDs[0]
+	}
+
+	return resp.StatusCode, innerBodyStr, firstTxnID, txnIDs, nil
 }
 
 // ========== RPC CONSUMER ==========
@@ -193,10 +200,11 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 			headers[k] = v
 		}
 
-		httpStatus, respBody, txnID, sendErr := sendToExternalWithdrawAPI(d.Body, headers)
+		httpStatus, respBody, firstTxnID, txnID, sendErr := sendToExternalWithdrawAPI(d.Body, headers)
 
 		log.Printf("HTTP Status: %d", httpStatus)
 		log.Printf("Transaction ID: %s", txnID)
+		log.Printf("First Transaction ID: %s", firstTxnID)
 		log.Printf("Body: %s", respBody)
 		log.Printf("Body length: %d", len(respBody))
 
@@ -208,7 +216,7 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 				errMsg = sendErr.Error()
 			}
 		}
-		_, _ = insertWithdrawLog(r.QueueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, txnID)
+		_, _ = insertWithdrawLog(r.QueueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, firstTxnID)
 
 		if d.ReplyTo != "" {
 			var jsonBody []byte
