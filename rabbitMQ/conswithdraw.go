@@ -8,16 +8,12 @@ import (
 	"errors"
 	"io"
 	"log"
-	"mime"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
 	amqp "github.com/rabbitmq/amqp091-go"
-	"golang.org/x/text/encoding/htmlindex"
-	"golang.org/x/text/transform"
 )
 
 var db *sql.DB
@@ -101,41 +97,26 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	}
 	defer resp.Body.Close()
 
-	// ตรวจสอบ charset จาก Content-Type
-	contentType := resp.Header.Get("Content-Type")
-	_, params, _ := mime.ParseMediaType(contentType)
-	charset := strings.ToLower(params["charset"])
-	if charset == "" {
-		charset = "utf-8"
-	}
-
-	// แปลง encoding เป็น UTF-8
-	var reader io.Reader
-	enc, err := htmlindex.Get(charset)
-	if err != nil {
-		reader = resp.Body // fallback เป็น UTF-8
-	} else {
-		reader = transform.NewReader(resp.Body, enc.NewDecoder())
-	}
-
-	respBytes, err := io.ReadAll(reader)
+	// อ่าน body เป็น []byte
+	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return resp.StatusCode, "", "", err
 	}
 
+	// แปลงเป็น string เพื่อ log safely
 	bodyStr := string(respBytes)
 	log.Printf("📥 Response body: %s", bodyStr)
 
 	// แยก transaction_id
-	var parsed map[string]interface{}
-	_ = json.Unmarshal(respBytes, &parsed)
-
 	txnID := ""
-	if dataMap, ok := parsed["data"].(map[string]interface{}); ok {
-		if details, ok := dataMap["details"].([]interface{}); ok && len(details) > 0 {
-			if first, ok := details[0].(map[string]interface{}); ok {
-				if val, ok := first["transaction_id"].(string); ok {
-					txnID = val
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(respBytes, &parsed); err == nil {
+		if dataMap, ok := parsed["data"].(map[string]interface{}); ok {
+			if details, ok := dataMap["details"].([]interface{}); ok && len(details) > 0 {
+				if first, ok := details[0].(map[string]interface{}); ok {
+					if val, ok := first["transaction_id"].(string); ok {
+						txnID = val
+					}
 				}
 			}
 		}
