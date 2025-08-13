@@ -148,25 +148,59 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, "", "", nil, err
+		log.Fatal(err)
 	}
 	defer resp.Body.Close()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return resp.StatusCode, "", "", nil, err
+		log.Fatal(err)
 	}
 
-	respBody := string(respBytes)
-	log.Printf("📥 Response body: %s", respBody)
-
-	// parse JSON ตามรูปแบบที่ปลายทางให้มา
 	var depositResp DepositResponse
 	if err := json.Unmarshal(respBytes, &depositResp); err != nil {
-		// ถ้า parse ไม่ได้ ให้ส่ง body กลับไปให้เห็น raw และ error
-		return resp.StatusCode, respBody, "", nil, err
+		log.Fatal("Cannot parse response:", err)
 	}
 
+	// แปลง struct -> JSON string สำหรับ return
+	respJSON, err := json.Marshal(depositResp)
+	if err != nil {
+		return resp.StatusCode, string(respBytes), "", nil, err
+	}
+
+	// แสดงข้อมูล response
+	log.Printf("HTTP Status: %d", resp.StatusCode)
+	log.Printf("Message: %s", depositResp.Message)
+	if len(depositResp.Data.Details) > 0 {
+		log.Printf("Transaction ID: %s", depositResp.Data.Details[0].TransactionID)
+		log.Printf("QR String: %s", depositResp.Data.Details[0].QRString)
+	}
+
+	/*
+	   	client := &http.Client{Timeout: 30 * time.Second}
+	   	resp, err := client.Do(req)
+	   	if err != nil {
+	   		return 0, "", "", nil, err
+	   	}
+	   	defer resp.Body.Close()
+
+	   	respBytes, err := io.ReadAll(resp.Body)
+	   	if err != nil {
+	   		return resp.StatusCode, "", "", nil, err
+	   	}
+	   /*
+	   	respBody := string(respBytes)
+	   	log.Printf("📥 Response body: %s", respBody)
+
+
+
+	   	// parse JSON ตามรูปแบบที่ปลายทางให้มา
+	   	var depositResp DepositResponse
+	   	if err := json.Unmarshal(respBytes, &depositResp); err != nil {
+	   		// ถ้า parse ไม่ได้ ให้ส่ง body กลับไปให้เห็น raw และ error
+	   		return resp.StatusCode, respBody, "", nil, err
+	   	}
+	*/
 	// รวบรวม txn IDs
 	txnIDs := make([]string, 0, len(depositResp.Data.Details))
 	for _, d := range depositResp.Data.Details {
@@ -179,7 +213,7 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		firstTxnID = txnIDs[0]
 	}
 
-	return resp.StatusCode, respBody, firstTxnID, txnIDs, nil
+	return resp.StatusCode, string(respJSON), firstTxnID, txnIDs, nil
 }
 
 // ===== RPC CONSUMER =====
