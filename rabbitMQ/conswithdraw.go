@@ -15,7 +15,6 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
-	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 var db *sql.DB
@@ -113,8 +112,9 @@ RETURNING id;`
 }
 
 // ========== SEND TO EXTERNAL API ==========
+/*
 func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int, string, string, string, error) {
-	/*apiURL := os.Getenv("WITHDRAW_URL")
+	apiURL := os.Getenv("WITHDRAW_URL")
 	if apiURL == "" {
 		return 0, "", "", nil, errors.New("WITHDRAW_URL not set")
 	}
@@ -195,6 +195,101 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	}
 
 	return resp.StatusCode, innerBodyStr, firstTxnID, txnIDs, nil
+}
+*/
+
+// decodeBody รองรับ base64 + gzip
+func decodeBody(bodyStr string) ([]byte, error) {
+	decoded := []byte(bodyStr)
+
+	// ลอง base64 decode
+	if b, err := base64.StdEncoding.DecodeString(bodyStr); err == nil {
+		decoded = b
+	}
+
+	// ลอง gzip decompress
+	if gzReader, err := gzip.NewReader(bytes.NewReader(decoded)); err == nil {
+		defer gzReader.Close()
+		if data, err := io.ReadAll(gzReader); err == nil {
+			decoded = data
+		}
+	}
+
+	return decoded, nil
+}
+
+// ========== RPC CONSUMER ==========
+func (r *RabbitWithdrawMQ) ConswithdrawRPC(data []byte) {
+	/*
+		if err := InitDB(); err != nil {
+			log.Fatalf("❌ InitDB failed: %v", err)
+		}
+		defer db.Close()
+
+		conn, ch := ConnectMQ()
+		defer CloseMQ(conn, ch)
+
+		q, err := ch.QueueDeclare(r.QueueName, false, false, false, false, nil)
+		if err != nil {
+			log.Fatalf("❌ Queue declare error: %v", err)
+		}
+
+		msgs, err := ch.Consume(q.Name, "", false, false, false, false, nil)
+		if err != nil {
+			log.Fatalf("❌ Consume error: %v", err)
+		}
+
+		log.Printf("[*] Waiting for RPC requests on queue: %s", q.Name)
+		for d := range msgs {
+			headers := map[string]interface{}{}
+			for k, v := range d.Headers {
+				headers[k] = v
+			}
+
+			httpStatus, respBody, firstTxnID, txnIDs, sendErr := sendToExternalWithdrawAPI(d.Body, headers)
+
+			log.Printf("HTTP Status: %d", httpStatus)
+			log.Printf("First Transaction ID: %s", firstTxnID)
+			log.Printf("All Transaction IDs: %v", txnIDs)
+			log.Printf("Body length: %d", len(respBody))
+
+			status := "sent"
+			errMsg := ""
+			if sendErr != nil || httpStatus >= 500 {
+				status = "failed"
+				if sendErr != nil {
+					errMsg = sendErr.Error()
+				}
+			}
+
+			_, _ = insertWithdrawLog(r.QueueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, firstTxnID)
+
+			if d.ReplyTo != "" {
+				var jsonBody []byte
+				if json.Valid([]byte(respBody)) {
+					jsonBody = []byte(respBody)
+				} else {
+					jsonBody, _ = json.Marshal(map[string]interface{}{
+						"status": httpStatus,
+						"body":   respBody,
+						"error":  errMsg,
+					})
+				}
+
+				_ = ch.PublishWithContext(context.Background(),
+					"",
+					d.ReplyTo,
+					false,
+					false,
+					amqp.Publishing{
+						ContentType:   "application/json",
+						CorrelationId: d.CorrelationId,
+						Body:          jsonBody,
+					})
+			}
+
+			d.Ack(false)
+		}
 	*/
 
 	apiURL := os.Getenv("WITHDRAW_URL")
@@ -232,98 +327,4 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		log.Printf("QR String: %s", depositResp.Data.Details[0].QRString)
 	}
 
-	return resp.StatusCode, depositResp.Data.Details[0].QRString, "", "", nil
-}
-
-// decodeBody รองรับ base64 + gzip
-func decodeBody(bodyStr string) ([]byte, error) {
-	decoded := []byte(bodyStr)
-
-	// ลอง base64 decode
-	if b, err := base64.StdEncoding.DecodeString(bodyStr); err == nil {
-		decoded = b
-	}
-
-	// ลอง gzip decompress
-	if gzReader, err := gzip.NewReader(bytes.NewReader(decoded)); err == nil {
-		defer gzReader.Close()
-		if data, err := io.ReadAll(gzReader); err == nil {
-			decoded = data
-		}
-	}
-
-	return decoded, nil
-}
-
-// ========== RPC CONSUMER ==========
-func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
-	if err := InitDB(); err != nil {
-		log.Fatalf("❌ InitDB failed: %v", err)
-	}
-	defer db.Close()
-
-	conn, ch := ConnectMQ()
-	defer CloseMQ(conn, ch)
-
-	q, err := ch.QueueDeclare(r.QueueName, false, false, false, false, nil)
-	if err != nil {
-		log.Fatalf("❌ Queue declare error: %v", err)
-	}
-
-	msgs, err := ch.Consume(q.Name, "", false, false, false, false, nil)
-	if err != nil {
-		log.Fatalf("❌ Consume error: %v", err)
-	}
-
-	log.Printf("[*] Waiting for RPC requests on queue: %s", q.Name)
-	for d := range msgs {
-		headers := map[string]interface{}{}
-		for k, v := range d.Headers {
-			headers[k] = v
-		}
-
-		httpStatus, respBody, firstTxnID, txnIDs, sendErr := sendToExternalWithdrawAPI(d.Body, headers)
-
-		log.Printf("HTTP Status: %d", httpStatus)
-		log.Printf("First Transaction ID: %s", firstTxnID)
-		log.Printf("All Transaction IDs: %v", txnIDs)
-		log.Printf("Body length: %d", len(respBody))
-
-		status := "sent"
-		errMsg := ""
-		if sendErr != nil || httpStatus >= 500 {
-			status = "failed"
-			if sendErr != nil {
-				errMsg = sendErr.Error()
-			}
-		}
-
-		_, _ = insertWithdrawLog(r.QueueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, firstTxnID)
-
-		if d.ReplyTo != "" {
-			var jsonBody []byte
-			if json.Valid([]byte(respBody)) {
-				jsonBody = []byte(respBody)
-			} else {
-				jsonBody, _ = json.Marshal(map[string]interface{}{
-					"status": httpStatus,
-					"body":   respBody,
-					"error":  errMsg,
-				})
-			}
-
-			_ = ch.PublishWithContext(context.Background(),
-				"",
-				d.ReplyTo,
-				false,
-				false,
-				amqp.Publishing{
-					ContentType:   "application/json",
-					CorrelationId: d.CorrelationId,
-					Body:          jsonBody,
-				})
-		}
-
-		d.Ack(false)
-	}
 }
