@@ -73,6 +73,7 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		return 0, "", "", errors.New("WITHDRAW_URL not set")
 	}
 
+	// สร้าง request
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
 	if err != nil {
 		return 0, "", "", err
@@ -107,7 +108,7 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	bodyStr := string(respBytes)
 	log.Printf("📥 Response body: %s", bodyStr)
 
-	// แยก transaction_id
+	// แยก transaction_id จาก details[0]
 	txnID := ""
 	var parsed map[string]interface{}
 	if err := json.Unmarshal(respBytes, &parsed); err == nil {
@@ -154,6 +155,10 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 
 		httpStatus, respBody, txnID, sendErr := sendToExternalWithdrawAPI(d.Body, headers)
 
+		log.Printf("HTTP Status: %d", httpStatus)
+		log.Printf("Transaction ID: %s", txnID)
+		log.Printf("Body length: %d", len(respBody))
+
 		status := "sent"
 		errMsg := ""
 		if sendErr != nil || httpStatus >= 500 {
@@ -162,7 +167,6 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 				errMsg = sendErr.Error()
 			}
 		}
-
 		_, _ = insertWithdrawLog(r.QueueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, txnID)
 
 		if d.ReplyTo != "" {
