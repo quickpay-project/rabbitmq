@@ -14,7 +14,7 @@ type RabbitMQ struct {
 	QueueName string
 }
 
-func (r *RabbitMQ) Puplish(data []byte) {
+func (r *RabbitWithdrawMQ) Puplish() (data []byte) {
 
 	apiURL := os.Getenv("WITHDRAW_URL")
 
