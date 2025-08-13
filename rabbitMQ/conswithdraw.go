@@ -2,14 +2,17 @@ package rabbitmqconnect
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -67,13 +70,46 @@ RETURNING id;`
 }
 
 // ========== SEND TO EXTERNAL API ==========
+// readResponseBody อ่าน resp.Body รองรับ gzip และ base64
+func readResponseBody(resp *http.Response) ([]byte, error) {
+	var reader io.Reader = resp.Body
+	defer resp.Body.Close()
+
+	// ตรวจสอบ Content-Encoding
+	encoding := strings.ToLower(resp.Header.Get("Content-Encoding"))
+	if encoding == "gzip" {
+		gzReader, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		defer gzReader.Close()
+		reader = gzReader
+	}
+
+	respBytes, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	// ตรวจสอบ Content-Type ถ้าเป็น base64 (บาง API อาจ encode เป็น string)
+	contentType := resp.Header.Get("Content-Type")
+	if strings.Contains(contentType, "application/base64") || strings.HasPrefix(string(respBytes), "UEs") {
+		decoded, err := base64.StdEncoding.DecodeString(string(respBytes))
+		if err == nil {
+			respBytes = decoded
+		}
+	}
+
+	return respBytes, nil
+}
+
+// sendToExternalWithdrawAPI ส่ง request, อ่าน response, ดึง transaction_id
 func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int, string, string, error) {
 	apiURL := os.Getenv("WITHDRAW_URL")
 	if apiURL == "" {
 		return 0, "", "", errors.New("WITHDRAW_URL not set")
 	}
 
-	// สร้าง request
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
 	if err != nil {
 		return 0, "", "", err
@@ -96,19 +132,16 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	if err != nil {
 		return 0, "", "", err
 	}
-	defer resp.Body.Close()
 
-	// อ่าน body เป็น []byte
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := readResponseBody(resp)
 	if err != nil {
 		return resp.StatusCode, "", "", err
 	}
 
-	// แปลงเป็น string เพื่อ log safely
 	bodyStr := string(respBytes)
 	log.Printf("📥 Response body: %s", bodyStr)
 
-	// แยก transaction_id จาก details[0]
+	// ดึง transaction_id จาก details[0] ถ้า JSON
 	txnID := ""
 	var parsed map[string]interface{}
 	if err := json.Unmarshal(respBytes, &parsed); err == nil {
