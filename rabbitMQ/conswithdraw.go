@@ -15,6 +15,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 var db *sql.DB
@@ -112,8 +113,7 @@ RETURNING id;`
 }
 
 // ========== SEND TO EXTERNAL API ==========
-/*
-func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int, string, string, string, error) {
+func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int, string, string, []string, error) {
 	apiURL := os.Getenv("WITHDRAW_URL")
 	if apiURL == "" {
 		return 0, "", "", nil, errors.New("WITHDRAW_URL not set")
@@ -196,7 +196,6 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 
 	return resp.StatusCode, innerBodyStr, firstTxnID, txnIDs, nil
 }
-*/
 
 // decodeBody รองรับ base64 + gzip
 func decodeBody(bodyStr string) ([]byte, error) {
@@ -219,112 +218,77 @@ func decodeBody(bodyStr string) ([]byte, error) {
 }
 
 // ========== RPC CONSUMER ==========
-func (r *RabbitWithdrawMQ) ConswithdrawRPC(data []byte) {
-	/*
-		if err := InitDB(); err != nil {
-			log.Fatalf("❌ InitDB failed: %v", err)
+func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
+
+	if err := InitDB(); err != nil {
+		log.Fatalf("❌ InitDB failed: %v", err)
+	}
+	defer db.Close()
+
+	conn, ch := ConnectMQ()
+	defer CloseMQ(conn, ch)
+
+	q, err := ch.QueueDeclare(r.QueueName, false, false, false, false, nil)
+	if err != nil {
+		log.Fatalf("❌ Queue declare error: %v", err)
+	}
+
+	msgs, err := ch.Consume(q.Name, "", false, false, false, false, nil)
+	if err != nil {
+		log.Fatalf("❌ Consume error: %v", err)
+	}
+
+	log.Printf("[*] Waiting for RPC requests on queue: %s", q.Name)
+	for d := range msgs {
+		headers := map[string]interface{}{}
+		for k, v := range d.Headers {
+			headers[k] = v
 		}
-		defer db.Close()
 
-		conn, ch := ConnectMQ()
-		defer CloseMQ(conn, ch)
+		httpStatus, respBody, firstTxnID, txnIDs, sendErr := sendToExternalWithdrawAPI(d.Body, headers)
 
-		q, err := ch.QueueDeclare(r.QueueName, false, false, false, false, nil)
-		if err != nil {
-			log.Fatalf("❌ Queue declare error: %v", err)
+		log.Printf("HTTP Status: %d", httpStatus)
+		log.Printf("First Transaction ID: %s", firstTxnID)
+		log.Printf("All Transaction IDs: %v", txnIDs)
+		log.Printf("Body length: %d", len(respBody))
+
+		status := "sent"
+		errMsg := ""
+		if sendErr != nil || httpStatus >= 500 {
+			status = "failed"
+			if sendErr != nil {
+				errMsg = sendErr.Error()
+			}
 		}
 
-		msgs, err := ch.Consume(q.Name, "", false, false, false, false, nil)
-		if err != nil {
-			log.Fatalf("❌ Consume error: %v", err)
-		}
+		_, _ = insertWithdrawLog(r.QueueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, firstTxnID)
 
-		log.Printf("[*] Waiting for RPC requests on queue: %s", q.Name)
-		for d := range msgs {
-			headers := map[string]interface{}{}
-			for k, v := range d.Headers {
-				headers[k] = v
+		if d.ReplyTo != "" {
+			var jsonBody []byte
+			if json.Valid([]byte(respBody)) {
+				jsonBody = []byte(respBody)
+			} else {
+				jsonBody, _ = json.Marshal(map[string]interface{}{
+					"status": httpStatus,
+					"body":   respBody,
+					"error":  errMsg,
+				})
 			}
 
-			httpStatus, respBody, firstTxnID, txnIDs, sendErr := sendToExternalWithdrawAPI(d.Body, headers)
-
-			log.Printf("HTTP Status: %d", httpStatus)
-			log.Printf("First Transaction ID: %s", firstTxnID)
-			log.Printf("All Transaction IDs: %v", txnIDs)
-			log.Printf("Body length: %d", len(respBody))
-
-			status := "sent"
-			errMsg := ""
-			if sendErr != nil || httpStatus >= 500 {
-				status = "failed"
-				if sendErr != nil {
-					errMsg = sendErr.Error()
-				}
-			}
-
-			_, _ = insertWithdrawLog(r.QueueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, firstTxnID)
-
-			if d.ReplyTo != "" {
-				var jsonBody []byte
-				if json.Valid([]byte(respBody)) {
-					jsonBody = []byte(respBody)
-				} else {
-					jsonBody, _ = json.Marshal(map[string]interface{}{
-						"status": httpStatus,
-						"body":   respBody,
-						"error":  errMsg,
-					})
-				}
-
-				_ = ch.PublishWithContext(context.Background(),
-					"",
-					d.ReplyTo,
-					false,
-					false,
-					amqp.Publishing{
-						ContentType:   "application/json",
-						CorrelationId: d.CorrelationId,
-						Body:          jsonBody,
-					})
-			}
-
-			d.Ack(false)
+			_ = ch.PublishWithContext(context.Background(),
+				"",
+				d.ReplyTo,
+				false,
+				false,
+				amqp.Publishing{
+					ContentType:   "application/json",
+					CorrelationId: d.CorrelationId,
+					Body:          jsonBody,
+				})
 		}
-	*/
 
-	apiURL := os.Getenv("WITHDRAW_URL")
+		d.Ack(false)
 
-	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwNjkxMjYwMTYsInVzZXJJZCI6ImRkMWNhOGNkLThkNjgtNDQzOC1hZDI4LWUxMDIwZWFhNTMwZCJ9.u-HXhWv_E1fH0gxLp_0zJix5ShzY6RkHYQqxITjJwgg")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	var depositResp DepositResponse
-	if err := json.Unmarshal(respBytes, &depositResp); err != nil {
-		log.Fatal("Cannot parse response:", err)
-	}
-
-	// แสดงข้อมูล response
-	log.Printf("HTTP Status: %d", resp.StatusCode)
-	log.Printf("Message: %s", depositResp.Message)
-	if len(depositResp.Data.Details) > 0 {
-		log.Printf("Transaction ID: %s", depositResp.Data.Details[0].TransactionID)
-		log.Printf("QR String: %s", depositResp.Data.Details[0].QRString)
 	}
 
 }

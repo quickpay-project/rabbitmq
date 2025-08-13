@@ -1,12 +1,12 @@
 ﻿package rabbitmqconnect
 
 import (
-	"context"
+	"bytes"
+	"encoding/json"
+	"io"
 	"log"
-	"time"
-
-	errors "github.com/celalsahinaltinisik/exceptions"
-	amqp "github.com/rabbitmq/amqp091-go"
+	"net/http"
+	"os"
 )
 
 type RabbitMQ struct {
@@ -14,36 +14,40 @@ type RabbitMQ struct {
 	QueueName string
 }
 
-func (r *RabbitMQ) Puplish() {
+func (r *RabbitMQ) Puplish(data []byte) {
 
-	conn, ch := ConnectMQ()
-	defer CloseMQ(conn, ch)
+	apiURL := os.Getenv("WITHDRAW_URL")
 
-	// log.Println(ch)
-	q, err := ch.QueueDeclare(
-		r.QueueName, // name
-		false,       // durable
-		false,       // delete when unused
-		false,       // exclusive
-		false,       // no-wait
-		nil,         // arguments
-	)
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	errors.FailOnError(err, "Failed to declare a queue")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwNjkxMjYwMTYsInVzZXJJZCI6ImRkMWNhOGNkLThkNjgtNDQzOC1hZDI4LWUxMDIwZWFhNTMwZCJ9.u-HXhWv_E1fH0gxLp_0zJix5ShzY6RkHYQqxITjJwgg")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
 
-	body := r.Body
-	err = ch.PublishWithContext(ctx,
-		"",     // exchange
-		q.Name, // routing key
-		false,  // mandatory
-		false,  // immediate
-		amqp.Publishing{
-			ContentType: "text/plain",
-			Body:        []byte(body),
-		})
-	errors.FailOnError(err, "Failed to publish a message")
-	log.Printf(" [x] Sent %s\n", body)
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var depositResp DepositResponse
+	if err := json.Unmarshal(respBytes, &depositResp); err != nil {
+		log.Fatal("Cannot parse response:", err)
+	}
+
+	// แสดงข้อมูล response
+	log.Printf("HTTP Status: %d", resp.StatusCode)
+	log.Printf("Message: %s", depositResp.Message)
+	if len(depositResp.Data.Details) > 0 {
+		log.Printf("Transaction ID: %s", depositResp.Data.Details[0].TransactionID)
+		log.Printf("QR String: %s", depositResp.Data.Details[0].QRString)
+	}
 }
