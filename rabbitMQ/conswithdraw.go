@@ -162,12 +162,6 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		log.Fatal("Cannot parse response:", err)
 	}
 
-	// แปลง struct -> JSON string สำหรับ return
-	respJSON, err := json.Marshal(depositResp)
-	if err != nil {
-		return resp.StatusCode, string(respBytes), "", nil, err
-	}
-
 	// แสดงข้อมูล response
 	log.Printf("HTTP Status: %d", resp.StatusCode)
 	log.Printf("Message: %s", depositResp.Message)
@@ -211,6 +205,12 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	firstTxnID := ""
 	if len(txnIDs) > 0 {
 		firstTxnID = txnIDs[0]
+	}
+
+	// แปลง struct -> JSON string สำหรับ return
+	respJSON, err := json.Marshal(depositResp)
+	if err != nil {
+		return resp.StatusCode, string(respBytes), "", nil, err
 	}
 
 	return resp.StatusCode, string(respJSON), firstTxnID, txnIDs, nil
@@ -289,7 +289,6 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 					Body:          jsonBody,
 				})
 		}
-
 		d.Ack(false)
 	}
 }
