@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -226,11 +225,11 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	}
 
 	// แสดงข้อมูล response
-	fmt.Println("HTTP Status:", resp.StatusCode)
-	fmt.Println("Message:", depositResp.Message)
+	log.Printf("HTTP Status: %d", resp.StatusCode)
+	log.Printf("Message: %s", depositResp.Message)
 	if len(depositResp.Data.Details) > 0 {
-		fmt.Println("Transaction ID:", depositResp.Data.Details[0].TransactionID)
-		fmt.Println("QR String:", depositResp.Data.Details[0].QRString)
+		log.Printf("Transaction ID: %s", depositResp.Data.Details[0].TransactionID)
+		log.Printf("QR String: %s", depositResp.Data.Details[0].QRString)
 	}
 
 	return resp.StatusCode, depositResp.Data.Details[0].QRString, "", "", nil
