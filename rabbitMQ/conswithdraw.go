@@ -173,35 +173,6 @@ func decodeBody(bodyStr string) ([]byte, error) {
 	return decoded, nil
 }
 
-// sendToExternalWithdrawAPIWithRetry เพิ่ม retry สำหรับ network error หรือ HTTP >=500
-func sendToExternalWithdrawAPIWithRetry(data []byte, headers map[string]interface{}) (int, string, string, []string, error) {
-	var (
-		httpStatus int
-		respBody   string
-		firstTxnID string
-		txnIDs     []string
-		err        error
-	)
-
-	maxRetries := 3
-	backoff := time.Second * 1
-
-	for i := 0; i < maxRetries; i++ {
-		httpStatus, respBody, firstTxnID, txnIDs, err = sendToExternalWithdrawAPI(data, headers)
-		if err == nil && httpStatus < 500 {
-			// สำเร็จแล้ว
-			return httpStatus, respBody, firstTxnID, txnIDs, nil
-		}
-
-		log.Printf("⚠️ Attempt %d failed: %v, HTTP %d. Retrying in %v...", i+1, err, httpStatus, backoff)
-		time.Sleep(backoff)
-		backoff *= 2 // exponential backoff
-	}
-
-	// ถ้า retry หมดแล้วก็ return error
-	return httpStatus, respBody, firstTxnID, txnIDs, err
-}
-
 // ========== RPC CONSUMER ==========
 func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 	if err := InitDB(); err != nil {
@@ -229,7 +200,7 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 			headers[k] = v
 		}
 
-		httpStatus, respBody, firstTxnID, txnIDs, sendErr := sendToExternalWithdrawAPIWithRetry(d.Body, headers)
+		httpStatus, respBody, firstTxnID, txnIDs, sendErr := sendToExternalWithdrawAPI(d.Body, headers)
 
 		log.Printf("HTTP Status: %d", httpStatus)
 		log.Printf("First Transaction ID: %s", firstTxnID)
