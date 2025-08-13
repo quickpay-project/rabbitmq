@@ -2,10 +2,8 @@ package rabbitmqconnect
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -69,28 +67,6 @@ RETURNING id;`
 }
 
 // ========== SEND TO EXTERNAL API ==========
-// decodeBody decodes base64 and gzip if needed
-func decodeBody(bodyStr string) ([]byte, error) {
-	decoded := []byte(bodyStr)
-
-	// Try base64 decode
-	if b, err := base64.StdEncoding.DecodeString(bodyStr); err == nil {
-		decoded = b
-	}
-
-	// Try gzip decompress
-	if gzReader, err := gzip.NewReader(bytes.NewReader(decoded)); err == nil {
-		defer gzReader.Close()
-		if data, err := io.ReadAll(gzReader); err == nil {
-			decoded = data
-		}
-	}
-
-	return decoded, nil
-}
-
-// sendToExternalWithdrawAPI ส่ง request, decode body, log, ดึง transaction_id ทุกตัว
-// คืนค่า txnIDs []string และ transaction ตัวแรก txnID string สำหรับ insertWithdrawLog
 func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int, string, string, []string, error) {
 	apiURL := os.Getenv("WITHDRAW_URL")
 	if apiURL == "" {
@@ -101,6 +77,7 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	if err != nil {
 		return 0, "", "", nil, err
 	}
+
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range headers {
 		switch val := v.(type) {
@@ -126,33 +103,18 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		return resp.StatusCode, "", "", nil, err
 	}
 
-	outerBodyStr := string(respBytes)
-	log.Printf("📥 Outer body: %s", outerBodyStr)
+	bodyStr := string(respBytes)
+	log.Printf("📥 Response body: %s", bodyStr)
 
-	// parse outer JSON
-	var outer map[string]interface{}
-	if err := json.Unmarshal(respBytes, &outer); err != nil {
-		return resp.StatusCode, outerBodyStr, "", nil, err
-	}
-
-	bodyStr, _ := outer["body"].(string)
-	decoded, err := decodeBody(bodyStr)
-	if err != nil {
-		return resp.StatusCode, outerBodyStr, "", nil, err
-	}
-
-	innerBodyStr := string(decoded)
-	log.Printf("📥 Decoded inner body: %s", innerBodyStr)
-
-	// parse inner JSON
-	var inner map[string]interface{}
-	if err := json.Unmarshal(decoded, &inner); err != nil {
-		return resp.StatusCode, innerBodyStr, "", nil, err
+	// parse JSON
+	var respMap map[string]interface{}
+	if err := json.Unmarshal(respBytes, &respMap); err != nil {
+		return resp.StatusCode, bodyStr, "", nil, err
 	}
 
 	// ดึง transaction_id ทุกตัวจาก details array
 	txnIDs := []string{}
-	if dataMap, ok := inner["data"].(map[string]interface{}); ok {
+	if dataMap, ok := respMap["data"].(map[string]interface{}); ok {
 		if details, ok := dataMap["details"].([]interface{}); ok {
 			for _, d := range details {
 				if detail, ok := d.(map[string]interface{}); ok {
@@ -164,13 +126,12 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		}
 	}
 
-	// transaction ตัวแรก สำหรับ insertWithdrawLog
 	firstTxnID := ""
 	if len(txnIDs) > 0 {
 		firstTxnID = txnIDs[0]
 	}
 
-	return resp.StatusCode, innerBodyStr, firstTxnID, txnIDs, nil
+	return resp.StatusCode, bodyStr, firstTxnID, txnIDs, nil
 }
 
 // ========== RPC CONSUMER ==========
