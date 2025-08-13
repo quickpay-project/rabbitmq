@@ -2,8 +2,10 @@ package rabbitmqconnect
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -103,18 +105,34 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		return resp.StatusCode, "", "", nil, err
 	}
 
-	bodyStr := string(respBytes)
-	log.Printf("📥 Response body: %s", bodyStr)
+	outerBodyStr := string(respBytes)
+	log.Printf("📥 Outer body: %s", outerBodyStr)
 
-	// parse JSON
-	var respMap map[string]interface{}
-	if err := json.Unmarshal(respBytes, &respMap); err != nil {
-		return resp.StatusCode, bodyStr, "", nil, err
+	// parse outer JSON
+	var outer map[string]interface{}
+	if err := json.Unmarshal(respBytes, &outer); err != nil {
+		return resp.StatusCode, outerBodyStr, "", nil, err
+	}
+
+	bodyStr, _ := outer["body"].(string)
+	decoded, err := decodeBody(bodyStr)
+	if err != nil {
+		// ถ้า decode ไม่สำเร็จ ใช้ raw body
+		decoded = []byte(bodyStr)
+	}
+
+	innerBodyStr := string(decoded)
+	log.Printf("📥 Decoded inner body: %s", innerBodyStr)
+
+	// parse inner JSON
+	var inner map[string]interface{}
+	if err := json.Unmarshal(decoded, &inner); err != nil {
+		return resp.StatusCode, innerBodyStr, "", nil, err
 	}
 
 	// ดึง transaction_id ทุกตัวจาก details array
 	txnIDs := []string{}
-	if dataMap, ok := respMap["data"].(map[string]interface{}); ok {
+	if dataMap, ok := inner["data"].(map[string]interface{}); ok {
 		if details, ok := dataMap["details"].([]interface{}); ok {
 			for _, d := range details {
 				if detail, ok := d.(map[string]interface{}); ok {
@@ -126,12 +144,62 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		}
 	}
 
+	// transaction ตัวแรก สำหรับ insertWithdrawLog
 	firstTxnID := ""
 	if len(txnIDs) > 0 {
 		firstTxnID = txnIDs[0]
 	}
 
-	return resp.StatusCode, bodyStr, firstTxnID, txnIDs, nil
+	return resp.StatusCode, innerBodyStr, firstTxnID, txnIDs, nil
+}
+
+// decodeBody รองรับ base64 + gzip
+func decodeBody(bodyStr string) ([]byte, error) {
+	decoded := []byte(bodyStr)
+
+	// ลอง base64 decode
+	if b, err := base64.StdEncoding.DecodeString(bodyStr); err == nil {
+		decoded = b
+	}
+
+	// ลอง gzip decompress
+	if gzReader, err := gzip.NewReader(bytes.NewReader(decoded)); err == nil {
+		defer gzReader.Close()
+		if data, err := io.ReadAll(gzReader); err == nil {
+			decoded = data
+		}
+	}
+
+	return decoded, nil
+}
+
+// sendToExternalWithdrawAPIWithRetry เพิ่ม retry สำหรับ network error หรือ HTTP >=500
+func sendToExternalWithdrawAPIWithRetry(data []byte, headers map[string]interface{}) (int, string, string, []string, error) {
+	var (
+		httpStatus int
+		respBody   string
+		firstTxnID string
+		txnIDs     []string
+		err        error
+	)
+
+	maxRetries := 3
+	backoff := time.Second * 1
+
+	for i := 0; i < maxRetries; i++ {
+		httpStatus, respBody, firstTxnID, txnIDs, err = sendToExternalWithdrawAPI(data, headers)
+		if err == nil && httpStatus < 500 {
+			// สำเร็จแล้ว
+			return httpStatus, respBody, firstTxnID, txnIDs, nil
+		}
+
+		log.Printf("⚠️ Attempt %d failed: %v, HTTP %d. Retrying in %v...", i+1, err, httpStatus, backoff)
+		time.Sleep(backoff)
+		backoff *= 2 // exponential backoff
+	}
+
+	// ถ้า retry หมดแล้วก็ return error
+	return httpStatus, respBody, firstTxnID, txnIDs, err
 }
 
 // ========== RPC CONSUMER ==========
@@ -161,12 +229,11 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 			headers[k] = v
 		}
 
-		httpStatus, respBody, firstTxnID, txnID, sendErr := sendToExternalWithdrawAPI(d.Body, headers)
+		httpStatus, respBody, firstTxnID, txnIDs, sendErr := sendToExternalWithdrawAPIWithRetry(d.Body, headers)
 
 		log.Printf("HTTP Status: %d", httpStatus)
-		log.Printf("Transaction ID: %s", txnID)
 		log.Printf("First Transaction ID: %s", firstTxnID)
-		log.Printf("Body: %s", respBody)
+		log.Printf("All Transaction IDs: %v", txnIDs)
 		log.Printf("Body length: %d", len(respBody))
 
 		status := "sent"
@@ -177,6 +244,7 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 				errMsg = sendErr.Error()
 			}
 		}
+
 		_, _ = insertWithdrawLog(r.QueueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, firstTxnID)
 
 		if d.ReplyTo != "" {
