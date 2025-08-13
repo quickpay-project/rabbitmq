@@ -90,16 +90,21 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		}
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, "", "", err
 	}
 	defer resp.Body.Close()
+
+	log.Printf("📥 Response resp.Body: %s", resp.Body)
+
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return resp.StatusCode, "", "", err
 	}
+
+	log.Printf("📥 Response respBytes: %s", respBytes)
 
 	bodyStr := string(respBytes)
 
