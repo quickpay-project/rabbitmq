@@ -132,7 +132,7 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		return 0, "", "", nil, err
 	}
 
-	/*req.Header.Set("Content-Type", "application/json")
+	/*req.Header.Set("Content-Type", "application/json")*/
 	for k, v := range headers {
 		switch val := v.(type) {
 		case string:
@@ -143,10 +143,9 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 			b, _ := json.Marshal(val)
 			req.Header.Set(k, string(b))
 		}
-	}*/
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwNjkxMjYwMTYsInVzZXJJZCI6ImRkMWNhOGNkLThkNjgtNDQzOC1hZDI4LWUxMDIwZWFhNTMwZCJ9.u-HXhWv_E1fH0gxLp_0zJix5ShzY6RkHYQqxITjJwgg")
+	}
+	/*req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwNjkxMjYwMTYsInVzZXJJZCI6ImRkMWNhOGNkLThkNjgtNDQzOC1hZDI4LWUxMDIwZWFhNTMwZCJ9.u-HXhWv_E1fH0gxLp_0zJix5ShzY6RkHYQqxITjJwgg")*/
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
