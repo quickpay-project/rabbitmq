@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -99,20 +98,34 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		return 0, "", "", errors.New("WITHDRAW_URL not set")
 	}
 
+	type APIResponse struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Order struct {
+				OperatorOrderID string  `json:"operator_order_id"`
+				Amount          float64 `json:"amount"`
+			} `json:"order"`
+			Details []struct {
+				TransactionID string  `json:"transaction_id"`
+				Amount        float64 `json:"amount"`
+			} `json:"details"`
+		} `json:"data"`
+	}
+
 	var statusCode int
-	var bodyStr string
 	var txnID string
-	var err error
+	var jsonStr string
+	var amount float64
 
 	for attempt := 1; attempt <= 3; attempt++ {
 		req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
 		if err != nil {
-			log.Printf("Attempt %d: Failed to create request: %v\n", attempt, err)
 			return 0, "", "", err
 		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept-Encoding", "gzip") // ✅ บอกว่าเรารับ gzip ได้
 
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept-Encoding", "gzip, deflate")
 		for k, v := range headers {
 			switch val := v.(type) {
 			case string:
@@ -128,31 +141,28 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		client := &http.Client{Timeout: 15 * time.Second}
 		resp, err := client.Do(req)
 		if err != nil {
-			log.Printf("Attempt %d: HTTP request error: %v\n", attempt, err)
 			if attempt == 3 {
 				return 0, "", "", err
 			}
 			time.Sleep(2 * time.Second)
 			continue
 		}
-
 		defer resp.Body.Close()
 
-		var respBodyReader io.Reader = resp.Body
-		// ✅ ถ้า response เป็น gzip ให้คลายก่อน
-		if strings.Contains(resp.Header.Get("Content-Encoding"), "gzip") {
-			gzReader, gzErr := gzip.NewReader(resp.Body)
-			if gzErr != nil {
-				log.Printf("Attempt %d: Failed to create gzip reader: %v\n", attempt, gzErr)
-				return resp.StatusCode, "", "", gzErr
+		var reader io.ReadCloser
+		switch resp.Header.Get("Content-Encoding") {
+		case "gzip":
+			reader, err = gzip.NewReader(resp.Body)
+			if err != nil {
+				return resp.StatusCode, "", "", err
 			}
-			defer gzReader.Close()
-			respBodyReader = gzReader
+			defer reader.Close()
+		default:
+			reader = resp.Body
 		}
 
-		respBytes, err := io.ReadAll(respBodyReader)
+		respBytes, err := io.ReadAll(reader)
 		if err != nil {
-			log.Printf("Attempt %d: Failed to read response body: %v\n", attempt, err)
 			if attempt == 3 {
 				return resp.StatusCode, "", "", err
 			}
@@ -160,26 +170,46 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 			continue
 		}
 
-		bodyStr = string(respBytes)
 		statusCode = resp.StatusCode
+		jsonStr = string(respBytes)
 
-		var parsed map[string]interface{}
-		_ = json.Unmarshal(respBytes, &parsed)
-		if val, ok := parsed["transaction_id"].(string); ok {
-			txnID = val
+		// ✅ Parse JSON
+		var parsed APIResponse
+		if err := json.Unmarshal(respBytes, &parsed); err == nil {
+			if len(parsed.Data.Details) > 0 {
+				txnID = parsed.Data.Details[0].TransactionID
+				amount = parsed.Data.Details[0].Amount
+			}
 		}
 
-		log.Printf("Attempt %d: Response status: %d, body: %s\n", attempt, statusCode, bodyStr)
+		// ✅ บันทึกลง DB
+		if db != nil {
+			_, err := insertWithdrawLog(
+				"withdraw",
+				data,
+				headers,
+				statusCode,
+				jsonStr,
+				"sent",
+				1,
+				"",
+				txnID,
+			)
+			if err != nil {
+				log.Printf("⚠️ Failed to insert withdraw log: %v", err)
+			} else {
+				log.Printf("✅ Withdraw log inserted: txnID=%s, amount=%.2f", txnID, amount)
+			}
+		}
 
 		if statusCode == http.StatusOK {
 			break
 		} else {
-			log.Printf("Attempt %d: Received non-200 status, retrying...\n", attempt)
 			time.Sleep(2 * time.Second)
 		}
 	}
 
-	return statusCode, bodyStr, txnID, err
+	return statusCode, jsonStr, txnID, nil
 }
 
 // Conswithdraw handles message consumption, forwarding, and logging
