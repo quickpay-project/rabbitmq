@@ -2,10 +2,8 @@ package rabbitmqconnect
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -20,7 +18,51 @@ import (
 
 var db *sql.DB
 
-// ========== DB INIT ==========
+type DepositRequest struct {
+	Amount          float64 `json:"amount"`
+	MID             string  `json:"mid"`
+	CustomerOrderID string  `json:"customer_order_id"`
+	CallbackURL     string  `json:"callback_url"`
+}
+
+type DepositResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		Order struct {
+			OperatorOrderID string      `json:"operator_order_id"`
+			CustomerOrderID string      `json:"customer_order_id"`
+			QRType          string      `json:"qr_type"`
+			Amount          float64     `json:"amount"`
+			AccountNumber   string      `json:"account_number"`
+			AccountName     string      `json:"account_name"`
+			TotalQRCode     int         `json:"total_qr_code"`
+			QRDetails       interface{} `json:"qr_details"`
+			BankCode        string      `json:"bank_code"`
+			CallbackURL     interface{} `json:"callback_url"`
+		} `json:"order"`
+		Details []struct {
+			TransactionID   string      `json:"transaction_id"`
+			QRString        string      `json:"qr_string"`
+			Amount          float64     `json:"amount"`
+			NetAmount       float64     `json:"net_amount"`
+			CreatedAt       string      `json:"created_at"`
+			ExpiredAt       string      `json:"expired_at"`
+			ImageURL        string      `json:"image_url"`
+			BankCode        string      `json:"bank_code"`
+			AccountName     string      `json:"account_name"`
+			AccountNumber   string      `json:"account_number"`
+			CustomerOrderID interface{} `json:"customer_order_id"`
+			UpdatedAt       interface{} `json:"updated_at"`
+			MdrAmount       interface{} `json:"mdr_amount"`
+			FeeAmount       interface{} `json:"fee_amount"`
+			VATAmount       interface{} `json:"vat_amount"`
+			WHTAmount       interface{} `json:"wht_amount"`
+		} `json:"details"`
+	} `json:"data"`
+}
+
+// ===== DB INIT =====
 func InitDB() error {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
@@ -40,9 +82,18 @@ func InitDB() error {
 	return db.PingContext(ctx)
 }
 
-// ========== INSERT LOG ==========
-func insertWithdrawLog(queueName string, body []byte, headers map[string]interface{},
-	httpStatus int, httpRespBody string, statusStr string, attempts int, errMsg string, txnID string) (int64, error) {
+// ===== INSERT LOG =====
+func insertWithdrawLog(
+	queueName string,
+	body []byte,
+	headers map[string]interface{},
+	httpStatus int,
+	httpRespBody string,
+	statusStr string,
+	attempts int,
+	errMsg string,
+	txnID string,
+) (int64, error) {
 
 	if db == nil {
 		return 0, errors.New("db not initialized")
@@ -68,7 +119,8 @@ RETURNING id;`
 	return id, err
 }
 
-// ========== SEND TO EXTERNAL API ==========
+// ===== CALL EXTERNAL API =====
+// return: httpStatus, respBody(raw string), firstTxnID, allTxnIDs, error
 func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int, string, string, []string, error) {
 	apiURL := os.Getenv("WITHDRAW_URL")
 	if apiURL == "" {
@@ -105,77 +157,35 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 		return resp.StatusCode, "", "", nil, err
 	}
 
-	outerBodyStr := string(respBytes)
-	log.Printf("📥 Outer body: %s", outerBodyStr)
+	respBody := string(respBytes)
+	log.Printf("📥 Response body: %s", respBody)
 
-	// parse outer JSON
-	var outer map[string]interface{}
-	if err := json.Unmarshal(respBytes, &outer); err != nil {
-		return resp.StatusCode, outerBodyStr, "", nil, err
+	// parse JSON ตามรูปแบบที่ปลายทางให้มา
+	var depositResp DepositResponse
+	if err := json.Unmarshal(respBytes, &depositResp); err != nil {
+		// ถ้า parse ไม่ได้ ให้ส่ง body กลับไปให้เห็น raw และ error
+		return resp.StatusCode, respBody, "", nil, err
 	}
 
-	bodyStr, _ := outer["body"].(string)
-	decoded, err := decodeBody(bodyStr)
-	if err != nil {
-		// ถ้า decode ไม่สำเร็จ ใช้ raw body
-		decoded = []byte(bodyStr)
-	}
-
-	innerBodyStr := string(decoded)
-	log.Printf("📥 Decoded inner body: %s", innerBodyStr)
-
-	// parse inner JSON
-	var inner map[string]interface{}
-	if err := json.Unmarshal(decoded, &inner); err != nil {
-		return resp.StatusCode, innerBodyStr, "", nil, err
-	}
-
-	// ดึง transaction_id ทุกตัวจาก details array
-	txnIDs := []string{}
-	if dataMap, ok := inner["data"].(map[string]interface{}); ok {
-		if details, ok := dataMap["details"].([]interface{}); ok {
-			for _, d := range details {
-				if detail, ok := d.(map[string]interface{}); ok {
-					if id, ok := detail["transaction_id"].(string); ok {
-						txnIDs = append(txnIDs, id)
-					}
-				}
-			}
+	// รวบรวม txn IDs
+	txnIDs := make([]string, 0, len(depositResp.Data.Details))
+	for _, d := range depositResp.Data.Details {
+		if d.TransactionID != "" {
+			txnIDs = append(txnIDs, d.TransactionID)
 		}
 	}
-
-	// transaction ตัวแรก สำหรับ insertWithdrawLog
 	firstTxnID := ""
 	if len(txnIDs) > 0 {
 		firstTxnID = txnIDs[0]
 	}
 
-	return resp.StatusCode, innerBodyStr, firstTxnID, txnIDs, nil
+	return resp.StatusCode, respBody, firstTxnID, txnIDs, nil
 }
 
-// decodeBody รองรับ base64 + gzip
-func decodeBody(bodyStr string) ([]byte, error) {
-	decoded := []byte(bodyStr)
+// ===== RPC CONSUMER =====
 
-	// ลอง base64 decode
-	if b, err := base64.StdEncoding.DecodeString(bodyStr); err == nil {
-		decoded = b
-	}
-
-	// ลอง gzip decompress
-	if gzReader, err := gzip.NewReader(bytes.NewReader(decoded)); err == nil {
-		defer gzReader.Close()
-		if data, err := io.ReadAll(gzReader); err == nil {
-			decoded = data
-		}
-	}
-
-	return decoded, nil
-}
-
-// ========== RPC CONSUMER ==========
+// ConnectMQ / CloseMQ ควรมีในโปรเจกต์ของคุณอยู่แล้ว
 func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
-
 	if err := InitDB(); err != nil {
 		log.Fatalf("❌ InitDB failed: %v", err)
 	}
@@ -196,6 +206,7 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 
 	log.Printf("[*] Waiting for RPC requests on queue: %s", q.Name)
 	for d := range msgs {
+		// map headers จาก RabbitMQ ไป HTTP header
 		headers := map[string]interface{}{}
 		for k, v := range d.Headers {
 			headers[k] = v
@@ -217,8 +228,10 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 			}
 		}
 
+		// ✅ ใส่ firstTxnID ให้ตรง signature insertWithdrawLog
 		_, _ = insertWithdrawLog(r.QueueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, firstTxnID)
 
+		// ตอบกลับ RPC
 		if d.ReplyTo != "" {
 			var jsonBody []byte
 			if json.Valid([]byte(respBody)) {
@@ -244,7 +257,5 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 		}
 
 		d.Ack(false)
-
 	}
-
 }
