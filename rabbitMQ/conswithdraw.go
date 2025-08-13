@@ -12,7 +12,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -70,39 +69,6 @@ RETURNING id;`
 }
 
 // ========== SEND TO EXTERNAL API ==========
-// readResponseBody อ่าน resp.Body รองรับ gzip และ base64
-func readResponseBody(resp *http.Response) ([]byte, error) {
-	var reader io.Reader = resp.Body
-	defer resp.Body.Close()
-
-	// ตรวจสอบ Content-Encoding
-	encoding := strings.ToLower(resp.Header.Get("Content-Encoding"))
-	if encoding == "gzip" {
-		gzReader, err := gzip.NewReader(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-		defer gzReader.Close()
-		reader = gzReader
-	}
-
-	respBytes, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, err
-	}
-
-	// ตรวจสอบ Content-Type ถ้าเป็น base64 (บาง API อาจ encode เป็น string)
-	contentType := resp.Header.Get("Content-Type")
-	if strings.Contains(contentType, "application/base64") || strings.HasPrefix(string(respBytes), "UEs") {
-		decoded, err := base64.StdEncoding.DecodeString(string(respBytes))
-		if err == nil {
-			respBytes = decoded
-		}
-	}
-
-	return respBytes, nil
-}
-
 // sendToExternalWithdrawAPI ส่ง request, อ่าน response, ดึง transaction_id
 func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int, string, string, error) {
 	apiURL := os.Getenv("WITHDRAW_URL")
@@ -132,31 +98,60 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	if err != nil {
 		return 0, "", "", err
 	}
+	defer resp.Body.Close()
 
-	respBytes, err := readResponseBody(resp)
+	// อ่าน resp.Body
+	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return resp.StatusCode, "", "", err
 	}
 
-	bodyStr := string(respBytes)
-	log.Printf("📥 Response body: %s", bodyStr)
+	// แปลงเป็น string outer JSON
+	outerBodyStr := string(respBytes)
+	log.Printf("📥 Outer body: %s", outerBodyStr)
 
-	// ดึง transaction_id จาก details[0] ถ้า JSON
+	// แยก outer JSON
+	var outer map[string]interface{}
+	if err := json.Unmarshal(respBytes, &outer); err != nil {
+		return resp.StatusCode, outerBodyStr, "", err
+	}
+
+	bodyStr, _ := outer["body"].(string)
+
+	// decode base64 ถ้ามี
+	decoded := []byte(bodyStr)
+	if b, err := base64.StdEncoding.DecodeString(bodyStr); err == nil {
+		decoded = b
+	}
+
+	// decode gzip ถ้ามี
+	if gzReader, err := gzip.NewReader(bytes.NewReader(decoded)); err == nil {
+		decoded, _ = io.ReadAll(gzReader)
+		gzReader.Close()
+	}
+
+	innerBodyStr := string(decoded)
+	log.Printf("📥 Decoded inner body: %s", innerBodyStr)
+
+	// parse inner JSON
+	var inner map[string]interface{}
+	if err := json.Unmarshal(decoded, &inner); err != nil {
+		return resp.StatusCode, innerBodyStr, "", err
+	}
+
+	// ดึง transaction_id
 	txnID := ""
-	var parsed map[string]interface{}
-	if err := json.Unmarshal(respBytes, &parsed); err == nil {
-		if dataMap, ok := parsed["data"].(map[string]interface{}); ok {
-			if details, ok := dataMap["details"].([]interface{}); ok && len(details) > 0 {
-				if first, ok := details[0].(map[string]interface{}); ok {
-					if val, ok := first["transaction_id"].(string); ok {
-						txnID = val
-					}
+	if dataMap, ok := inner["data"].(map[string]interface{}); ok {
+		if details, ok := dataMap["details"].([]interface{}); ok && len(details) > 0 {
+			if first, ok := details[0].(map[string]interface{}); ok {
+				if val, ok := first["transaction_id"].(string); ok {
+					txnID = val
 				}
 			}
 		}
 	}
 
-	return resp.StatusCode, bodyStr, txnID, nil
+	return resp.StatusCode, innerBodyStr, txnID, nil
 }
 
 // ========== RPC CONSUMER ==========
@@ -190,6 +185,7 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 
 		log.Printf("HTTP Status: %d", httpStatus)
 		log.Printf("Transaction ID: %s", txnID)
+		log.Printf("Body: %s", respBody)
 		log.Printf("Body length: %d", len(respBody))
 
 		status := "sent"
