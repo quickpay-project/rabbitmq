@@ -9,31 +9,24 @@ services:
     env_file:
       - .env
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
     ports:
       - "4000:4001"
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-      GIN_MODE: release         # ลด overhead logging
-    volumes:
-      - .:/app
-      - /go/pkg/mod             # cache module
-    working_dir: /app
-    command: >
-      sh -c "go mod tidy && go run main.go"
     restart: unless-stopped
 
   rabbitmq:
     image: rabbitmq:3.13-management
     container_name: rabbitmq
     ports:
-      - "5672:5672"   # AMQP protocol
-      - "15672:15672" # Management UI
+      - "5672:5672"
+      - "15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
-      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit tcp_listeners [{\"0.0.0.0\",5672}]"
-      RABBITMQ_VM_MEMORY_HIGH_WATERMARK: 0.4     # ใช้ RAM แค่ 40%
+      RABBITMQ_VM_MEMORY_HIGH_WATERMARK: 0.4
       RABBITMQ_DISK_FREE_LIMIT: 50MB
       RABBITMQ_HEARTBEAT: 60
     healthcheck:

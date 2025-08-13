@@ -123,8 +123,8 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	}
 
 	// รวบรวม txn IDs
-	txnIDs := make([]string, 0, len(withdrawResp.Data.Details))
-	for _, d := range withdrawResp.Data.Details {
+	txnIDs := make([]string, 0, len(withdrawResp.Details))
+	for _, d := range withdrawResp.Details {
 		if d.TransactionID != "" {
 			txnIDs = append(txnIDs, d.TransactionID)
 		}
