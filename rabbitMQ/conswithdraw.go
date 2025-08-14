@@ -183,8 +183,8 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 		errMsg := ""
 		var rpcResponse []byte
 
+		// กรณี 400 Bad Request: override message
 		if httpStatus == 400 {
-			// ดึง message จาก response ถ้ามี
 			message := "เกิดข้อผิดพลาดถอนเงิน"
 			respBytes := []byte(respBody)
 			if json.Valid(respBytes) {
@@ -198,33 +198,30 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 			errMsg = message
 			status = "failed"
 
-			// สร้าง response กลับแบบ code+message
 			rpcResponse, _ = json.Marshal(map[string]interface{}{
 				"code":    400,
 				"message": message,
 			})
 		} else if sendErr != nil || httpStatus >= 500 {
+			// กรณี server error
 			status = "failed"
 			if sendErr != nil {
 				errMsg = sendErr.Error()
 			}
+			rpcResponse, _ = json.Marshal(map[string]interface{}{
+				"status":  httpStatus,
+				"message": errMsg,
+			})
+		} else {
+			// กรณีสำเร็จ: ใช้ response ต้นทางเต็ม ๆ
+			rpcResponse = []byte(respBody)
 		}
 
+		// insert log
 		_, _ = insertWithdrawLog(r.QueueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, firstTxnID)
 
-		// ตอบกลับ RPC
+		// ส่ง RPC response
 		if d.ReplyTo != "" {
-			if rpcResponse == nil { // ถ้าไม่ใช่กรณี 400
-				if json.Valid([]byte(respBody)) {
-					rpcResponse = []byte(respBody)
-				} else {
-					rpcResponse, _ = json.Marshal(map[string]interface{}{
-						"status":  httpStatus,
-						"message": errMsg,
-					})
-				}
-			}
-
 			_ = ch.PublishWithContext(context.Background(),
 				"",
 				d.ReplyTo,
@@ -236,6 +233,7 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 					Body:          rpcResponse,
 				})
 		}
+
 		d.Ack(false)
 	}
 }
