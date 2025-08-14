@@ -182,7 +182,7 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 
 		status := "sent"
 		errMsg := ""
-		if sendErr != nil || httpStatus >= 500 {
+		if sendErr != nil || httpStatus >= 400 {
 			status = "failed"
 			if sendErr != nil {
 				errMsg = sendErr.Error()
