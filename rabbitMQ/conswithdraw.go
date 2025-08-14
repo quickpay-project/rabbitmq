@@ -23,25 +23,29 @@ type WithdrawRequest struct {
 }
 
 type WithdrawResponse struct {
-	Order struct {
-		Cost            float64 `json:"Cost"`
-		Amount          float64 `json:"amount"`
-		BankCode        string  `json:"bank_code"`
-		BankName        string  `json:"bank_name"`
-		TotalOrder      int     `json:"total_order"`
-		AccountName     string  `json:"account_name"`
-		WithdrawType    string  `json:"withdraw_type"`
-		AccountNumber   string  `json:"account_number"`
-		WithdrawDetails any     `json:"withdraw_details"`
-		CustomerOrderID string  `json:"customer_order_id"`
-		OperatorOrderID string  `json:"operator_order_id"`
-	} `json:"order"`
-	Details []struct {
-		Amount        float64 `json:"amount"`
-		CreatedAt     string  `json:"created_at"`
-		WithdrawID    string  `json:"withdraw_id"`
-		TransactionID string  `json:"transaction_id"`
-	} `json:"details"`
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		Order struct {
+			Cost            float64     `json:"Cost"`
+			Amount          float64     `json:"amount"`
+			BankCode        string      `json:"bank_code"`
+			BankName        string      `json:"bank_name"`
+			TotalOrder      int         `json:"total_order"`
+			AccountName     string      `json:"account_name"`
+			WithdrawType    string      `json:"withdraw_type"`
+			AccountNumber   string      `json:"account_number"`
+			WithdrawDetails interface{} `json:"withdraw_details"`
+			CustomerOrderID string      `json:"customer_order_id"`
+			OperatorOrderID string      `json:"operator_order_id"`
+		} `json:"order"`
+		Details []struct {
+			Amount        float64 `json:"amount"`
+			CreatedAt     string  `json:"created_at"`
+			WithdrawID    string  `json:"withdraw_id"`
+			TransactionID string  `json:"transaction_id"`
+		} `json:"details"`
+	} `json:"data"`
 }
 
 // ===== INSERT LOG =====
@@ -105,7 +109,7 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	}
 	req.Header.Set("Authorization", authHeader)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Fatal(err)
@@ -123,8 +127,8 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	}
 
 	// รวบรวม txn IDs
-	txnIDs := make([]string, 0, len(withdrawResp.Details))
-	for _, d := range withdrawResp.Details {
+	txnIDs := make([]string, 0, len(withdrawResp.Data.Details))
+	for _, d := range withdrawResp.Data.Details {
 		if d.TransactionID != "" {
 			txnIDs = append(txnIDs, d.TransactionID)
 		}
@@ -201,6 +205,7 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 			rpcResponse, _ = json.Marshal(map[string]interface{}{
 				"code":    400,
 				"message": message,
+				"data":    nil, // หรือจะใส่ empty struct/array ตาม requirement
 			})
 		} else if sendErr != nil || httpStatus >= 500 {
 			// กรณี server error
@@ -208,12 +213,14 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 			if sendErr != nil {
 				errMsg = sendErr.Error()
 			}
+
 			rpcResponse, _ = json.Marshal(map[string]interface{}{
-				"status":  httpStatus,
+				"code":    httpStatus,
 				"message": errMsg,
+				"data":    nil,
 			})
 		} else {
-			// กรณีสำเร็จ: ใช้ response ต้นทางเต็ม ๆ
+			// กรณี success: ใช้ response ต้นทางเต็ม ๆ
 			rpcResponse = []byte(respBody)
 		}
 
