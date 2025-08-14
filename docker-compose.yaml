@@ -23,19 +23,14 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
-    environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
-      RABBITMQ_VM_MEMORY_HIGH_WATERMARK: 0.8
-      RABBITMQ_VM_MEMORY_CALCULATION_STRATEGY: allocated
     volumes:
-      - rabbitmq_data:/var/lib/rabbitmq   # เพิ่ม volume
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
     healthcheck:
       test: ["CMD", "rabbitmqctl", "status"]
       interval: 10s
       timeout: 5s
       retries: 5
-
-volumes:
-  rabbitmq_data:
-    driver: local
+    
