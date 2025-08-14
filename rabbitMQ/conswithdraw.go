@@ -185,7 +185,7 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 
 		if httpStatus == 400 {
 			// ดึง message จาก response ถ้ามี
-			message := "ยอดเงินในบัญชีไม่เพียงพอสำหรับการถอนและค่าธรรมเนียม"
+			message := "เกิดข้อผิดพลาดถอนเงิน"
 			respBytes := []byte(respBody)
 			if json.Valid(respBytes) {
 				var respMap map[string]interface{}

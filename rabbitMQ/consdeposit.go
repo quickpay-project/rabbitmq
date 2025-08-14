@@ -205,7 +205,6 @@ func (r *RabbitDepositMQ) ConsdepositRPC() {
 
 	log.Printf("[*] Waiting for RPC requests on queue: %s", q.Name)
 	for d := range msgs {
-		// map headers จาก RabbitMQ ไป HTTP header
 		headers := map[string]interface{}{}
 		for k, v := range d.Headers {
 			headers[k] = v
@@ -220,27 +219,48 @@ func (r *RabbitDepositMQ) ConsdepositRPC() {
 
 		status := "sent"
 		errMsg := ""
-		if sendErr != nil || httpStatus >= 500 {
+		var rpcResponse []byte
+
+		if httpStatus == 400 {
+			// ดึง message จาก response ถ้ามี
+			message := "เกิดข้อผิดพลาดฝากเงิน"
+			respBytes := []byte(respBody)
+			if json.Valid(respBytes) {
+				var respMap map[string]interface{}
+				if err := json.Unmarshal(respBytes, &respMap); err == nil {
+					if msg, ok := respMap["message"].(string); ok && msg != "" {
+						message = msg
+					}
+				}
+			}
+			errMsg = message
+			status = "failed"
+
+			// สร้าง response กลับแบบ code+message
+			rpcResponse, _ = json.Marshal(map[string]interface{}{
+				"code":    400,
+				"message": message,
+			})
+		} else if sendErr != nil || httpStatus >= 500 {
 			status = "failed"
 			if sendErr != nil {
 				errMsg = sendErr.Error()
 			}
 		}
 
-		// ✅ ใส่ firstTxnID ให้ตรง signature insertDepositLog
 		_, _ = insertDepositLog(r.QueueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, firstTxnID)
 
 		// ตอบกลับ RPC
 		if d.ReplyTo != "" {
-			var jsonBody []byte
-			if json.Valid([]byte(respBody)) {
-				jsonBody = []byte(respBody)
-			} else {
-				jsonBody, _ = json.Marshal(map[string]interface{}{
-					"status": httpStatus,
-					"body":   respBody,
-					"error":  errMsg,
-				})
+			if rpcResponse == nil { // ถ้าไม่ใช่กรณี 400
+				if json.Valid([]byte(respBody)) {
+					rpcResponse = []byte(respBody)
+				} else {
+					rpcResponse, _ = json.Marshal(map[string]interface{}{
+						"status":  httpStatus,
+						"message": errMsg,
+					})
+				}
 			}
 
 			_ = ch.PublishWithContext(context.Background(),
@@ -251,7 +271,7 @@ func (r *RabbitDepositMQ) ConsdepositRPC() {
 				amqp.Publishing{
 					ContentType:   "application/json",
 					CorrelationId: d.CorrelationId,
-					Body:          jsonBody,
+					Body:          rpcResponse,
 				})
 		}
 		d.Ack(false)
