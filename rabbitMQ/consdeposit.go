@@ -198,82 +198,87 @@ func (r *RabbitDepositMQ) ConsdepositRPC() {
 		log.Fatalf("❌ Queue declare error: %v", err)
 	}
 
+	// ✅ เพิ่ม prefetch ให้ดึงได้ทีละหลายข้อความ (เช่น 20)
+	if err := ch.Qos(20, 0, false); err != nil {
+		log.Fatalf("❌ QoS set error: %v", err)
+	}
+
 	msgs, err := ch.Consume(q.Name, "", false, false, false, false, nil)
 	if err != nil {
 		log.Fatalf("❌ Consume error: %v", err)
 	}
 
 	log.Printf("[*] Waiting for RPC requests on queue: %s", q.Name)
+
 	for d := range msgs {
-		headers := map[string]interface{}{}
-		for k, v := range d.Headers {
-			headers[k] = v
-		}
+		// ✅ ใช้ Goroutine ประมวลผลแบบ parallel
+		go func(d amqp.Delivery) {
+			headers := map[string]interface{}{}
+			for k, v := range d.Headers {
+				headers[k] = v
+			}
 
-		httpStatus, respBody, firstTxnID, txnIDs, sendErr := sendToExternalDepositAPI(d.Body, headers)
+			httpStatus, respBody, firstTxnID, txnIDs, sendErr := sendToExternalDepositAPI(d.Body, headers)
 
-		log.Printf("HTTP Status: %d", httpStatus)
-		log.Printf("First Transaction ID: %s", firstTxnID)
-		log.Printf("All Transaction IDs: %v", txnIDs)
-		log.Printf("Body length: %d", len(respBody))
+			log.Printf("HTTP Status: %d", httpStatus)
+			log.Printf("First Transaction ID: %s", firstTxnID)
+			log.Printf("All Transaction IDs: %v", txnIDs)
+			log.Printf("Body length: %d", len(respBody))
 
-		status := "sent"
-		errMsg := ""
-		var rpcResponse []byte
+			status := "sent"
+			errMsg := ""
+			var rpcResponse []byte
 
-		if httpStatus == 400 {
-			// ดึง message จาก response ถ้ามี
-			message := "เกิดข้อผิดพลาดฝากเงิน"
-			respBytes := []byte(respBody)
-			if json.Valid(respBytes) {
-				var respMap map[string]interface{}
-				if err := json.Unmarshal(respBytes, &respMap); err == nil {
-					if msg, ok := respMap["message"].(string); ok && msg != "" {
-						message = msg
+			if httpStatus == 400 {
+				message := "เกิดข้อผิดพลาดฝากเงิน"
+				if json.Valid([]byte(respBody)) {
+					var respMap map[string]interface{}
+					if err := json.Unmarshal([]byte(respBody), &respMap); err == nil {
+						if msg, ok := respMap["message"].(string); ok && msg != "" {
+							message = msg
+						}
 					}
 				}
-			}
-			errMsg = message
-			status = "failed"
-
-			// สร้าง response กลับแบบ code+message
-			rpcResponse, _ = json.Marshal(map[string]interface{}{
-				"code":    400,
-				"message": message,
-			})
-		} else if sendErr != nil || httpStatus >= 500 {
-			status = "failed"
-			if sendErr != nil {
-				errMsg = sendErr.Error()
-			}
-		}
-
-		_, _ = insertDepositLog(r.QueueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, firstTxnID)
-
-		// ตอบกลับ RPC
-		if d.ReplyTo != "" {
-			if rpcResponse == nil { // ถ้าไม่ใช่กรณี 400
-				if json.Valid([]byte(respBody)) {
-					rpcResponse = []byte(respBody)
-				} else {
-					rpcResponse, _ = json.Marshal(map[string]interface{}{
-						"status":  httpStatus,
-						"message": errMsg,
-					})
+				errMsg = message
+				status = "failed"
+				rpcResponse, _ = json.Marshal(map[string]interface{}{
+					"code":    400,
+					"message": message,
+				})
+			} else if sendErr != nil || httpStatus >= 500 {
+				status = "failed"
+				if sendErr != nil {
+					errMsg = sendErr.Error()
 				}
 			}
 
-			_ = ch.PublishWithContext(context.Background(),
-				"",
-				d.ReplyTo,
-				false,
-				false,
-				amqp.Publishing{
-					ContentType:   "application/json",
-					CorrelationId: d.CorrelationId,
-					Body:          rpcResponse,
-				})
-		}
-		d.Ack(false)
+			_, _ = insertDepositLog(r.QueueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, firstTxnID)
+
+			if d.ReplyTo != "" {
+				if rpcResponse == nil {
+					if json.Valid([]byte(respBody)) {
+						rpcResponse = []byte(respBody)
+					} else {
+						rpcResponse, _ = json.Marshal(map[string]interface{}{
+							"status":  httpStatus,
+							"message": errMsg,
+						})
+					}
+				}
+
+				_ = ch.PublishWithContext(context.Background(),
+					"",
+					d.ReplyTo,
+					false,
+					false,
+					amqp.Publishing{
+						ContentType:   "application/json",
+						CorrelationId: d.CorrelationId,
+						Body:          rpcResponse,
+					})
+			}
+
+			d.Ack(false) // ✅ Ack หลังจากประมวลผลเสร็จ
+		}(d)
 	}
 }
