@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -198,8 +199,8 @@ func (r *RabbitDepositMQ) ConsdepositRPC() {
 		log.Fatalf("❌ Queue declare error: %v", err)
 	}
 
-	// ✅ เพิ่ม prefetch ให้ดึงได้ทีละหลายข้อความ (เช่น 20)
-	if err := ch.Qos(20, 0, false); err != nil {
+	workerCount := 10 // ✅ จำนวน worker ที่ process พร้อมกัน
+	if err := ch.Qos(workerCount, 0, false); err != nil {
 		log.Fatalf("❌ QoS set error: %v", err)
 	}
 
@@ -210,75 +211,86 @@ func (r *RabbitDepositMQ) ConsdepositRPC() {
 
 	log.Printf("[*] Waiting for RPC requests on queue: %s", q.Name)
 
-	for d := range msgs {
-		// ✅ ใช้ Goroutine ประมวลผลแบบ parallel
-		go func(d amqp.Delivery) {
-			headers := map[string]interface{}{}
-			for k, v := range d.Headers {
-				headers[k] = v
+	// ✅ สร้าง worker pool
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for d := range msgs {
+				processDepositMessage(d, ch, r.QueueName)
 			}
-
-			httpStatus, respBody, firstTxnID, txnIDs, sendErr := sendToExternalDepositAPI(d.Body, headers)
-
-			log.Printf("HTTP Status: %d", httpStatus)
-			log.Printf("First Transaction ID: %s", firstTxnID)
-			log.Printf("All Transaction IDs: %v", txnIDs)
-			log.Printf("Body length: %d", len(respBody))
-
-			status := "sent"
-			errMsg := ""
-			var rpcResponse []byte
-
-			if httpStatus == 400 {
-				message := "เกิดข้อผิดพลาดฝากเงิน"
-				if json.Valid([]byte(respBody)) {
-					var respMap map[string]interface{}
-					if err := json.Unmarshal([]byte(respBody), &respMap); err == nil {
-						if msg, ok := respMap["message"].(string); ok && msg != "" {
-							message = msg
-						}
-					}
-				}
-				errMsg = message
-				status = "failed"
-				rpcResponse, _ = json.Marshal(map[string]interface{}{
-					"code":    400,
-					"message": message,
-				})
-			} else if sendErr != nil || httpStatus >= 500 {
-				status = "failed"
-				if sendErr != nil {
-					errMsg = sendErr.Error()
-				}
-			}
-
-			_, _ = insertDepositLog(r.QueueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, firstTxnID)
-
-			if d.ReplyTo != "" {
-				if rpcResponse == nil {
-					if json.Valid([]byte(respBody)) {
-						rpcResponse = []byte(respBody)
-					} else {
-						rpcResponse, _ = json.Marshal(map[string]interface{}{
-							"status":  httpStatus,
-							"message": errMsg,
-						})
-					}
-				}
-
-				_ = ch.PublishWithContext(context.Background(),
-					"",
-					d.ReplyTo,
-					false,
-					false,
-					amqp.Publishing{
-						ContentType:   "application/json",
-						CorrelationId: d.CorrelationId,
-						Body:          rpcResponse,
-					})
-			}
-
-			d.Ack(false) // ✅ Ack หลังจากประมวลผลเสร็จ
-		}(d)
+		}(i)
 	}
+
+	wg.Wait()
+}
+
+func processDepositMessage(d amqp.Delivery, ch *amqp.Channel, queueName string) {
+	headers := map[string]interface{}{}
+	for k, v := range d.Headers {
+		headers[k] = v
+	}
+
+	httpStatus, respBody, firstTxnID, txnIDs, sendErr := sendToExternalDepositAPI(d.Body, headers)
+
+	log.Printf("HTTP Status: %d", httpStatus)
+	log.Printf("First Transaction ID: %s", firstTxnID)
+	log.Printf("All Transaction IDs: %v", txnIDs)
+	log.Printf("Body length: %d", len(respBody))
+
+	status := "sent"
+	errMsg := ""
+	var rpcResponse []byte
+
+	if httpStatus == 400 {
+		message := "เกิดข้อผิดพลาดฝากเงิน"
+		if json.Valid([]byte(respBody)) {
+			var respMap map[string]interface{}
+			if err := json.Unmarshal([]byte(respBody), &respMap); err == nil {
+				if msg, ok := respMap["message"].(string); ok && msg != "" {
+					message = msg
+				}
+			}
+		}
+		errMsg = message
+		status = "failed"
+		rpcResponse, _ = json.Marshal(map[string]interface{}{
+			"code":    400,
+			"message": message,
+		})
+	} else if sendErr != nil || httpStatus >= 500 {
+		status = "failed"
+		if sendErr != nil {
+			errMsg = sendErr.Error()
+		}
+	}
+
+	_, _ = insertDepositLog(queueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, firstTxnID)
+
+	if d.ReplyTo != "" {
+		if rpcResponse == nil {
+			if json.Valid([]byte(respBody)) {
+				rpcResponse = []byte(respBody)
+			} else {
+				rpcResponse, _ = json.Marshal(map[string]interface{}{
+					"status":  httpStatus,
+					"message": errMsg,
+				})
+			}
+		}
+
+		_ = ch.PublishWithContext(context.Background(),
+			"",
+			d.ReplyTo,
+			false,
+			false,
+			amqp.Publishing{
+				ContentType:   "application/json",
+				CorrelationId: d.CorrelationId,
+				Body:          rpcResponse,
+			})
+	}
+
+	d.Ack(false) // ✅ Ack หลังจากประมวลผลเสร็จ
 }

@@ -159,6 +159,11 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 	conn, ch := ConnectMQ()
 	defer CloseMQ(conn, ch)
 
+	// ตั้ง prefetch count (เช่น 10 ข้อความต่อ worker)
+	if err := ch.Qos(10, 0, false); err != nil {
+		log.Fatalf("❌ QoS set failed: %v", err)
+	}
+
 	q, err := ch.QueueDeclare(r.QueueName, false, false, false, false, nil)
 	if err != nil {
 		log.Fatalf("❌ Queue declare error: %v", err)
@@ -169,78 +174,82 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 		log.Fatalf("❌ Consume error: %v", err)
 	}
 
-	log.Printf("[*] Waiting for RPC requests on queue: %s", q.Name)
-	for d := range msgs {
-		headers := map[string]interface{}{}
-		for k, v := range d.Headers {
-			headers[k] = v
-		}
+	workerCount := 3 // จำนวน worker ที่ทำงานพร้อมกัน
+	log.Printf("[*] Waiting for RPC requests on queue: %s with %d workers", q.Name, workerCount)
 
-		httpStatus, respBody, firstTxnID, txnIDs, sendErr := sendToExternalWithdrawAPI(d.Body, headers)
+	for i := 0; i < workerCount; i++ {
+		go func(workerID int) {
+			for d := range msgs {
+				log.Printf("[Worker %d] Processing message", workerID)
 
-		log.Printf("HTTP Status: %d", httpStatus)
-		log.Printf("First Transaction ID: %s", firstTxnID)
-		log.Printf("All Transaction IDs: %v", txnIDs)
-		log.Printf("Body length: %d", len(respBody))
-
-		status := "sent"
-		errMsg := ""
-		var rpcResponse []byte
-
-		// กรณี 400 Bad Request: override message
-		if httpStatus == 400 {
-			message := "เกิดข้อผิดพลาดถอนเงิน"
-			respBytes := []byte(respBody)
-			if json.Valid(respBytes) {
-				var respMap map[string]interface{}
-				if err := json.Unmarshal(respBytes, &respMap); err == nil {
-					if msg, ok := respMap["message"].(string); ok && msg != "" {
-						message = msg
-					}
+				headers := map[string]interface{}{}
+				for k, v := range d.Headers {
+					headers[k] = v
 				}
+
+				httpStatus, respBody, firstTxnID, txnIDs, sendErr := sendToExternalWithdrawAPI(d.Body, headers)
+
+				log.Printf("HTTP Status: %d", httpStatus)
+				log.Printf("First Transaction ID: %s", firstTxnID)
+				log.Printf("All Transaction IDs: %v", txnIDs)
+				log.Printf("Body length: %d", len(respBody))
+
+				status := "sent"
+				errMsg := ""
+				var rpcResponse []byte
+
+				if httpStatus == 400 {
+					message := "เกิดข้อผิดพลาดถอนเงิน"
+					respBytes := []byte(respBody)
+					if json.Valid(respBytes) {
+						var respMap map[string]interface{}
+						if err := json.Unmarshal(respBytes, &respMap); err == nil {
+							if msg, ok := respMap["message"].(string); ok && msg != "" {
+								message = msg
+							}
+						}
+					}
+					errMsg = message
+					status = "failed"
+					rpcResponse, _ = json.Marshal(map[string]interface{}{
+						"code":    400,
+						"message": message,
+						"data":    nil,
+					})
+				} else if sendErr != nil || httpStatus >= 500 {
+					status = "failed"
+					if sendErr != nil {
+						errMsg = sendErr.Error()
+					}
+					rpcResponse, _ = json.Marshal(map[string]interface{}{
+						"code":    httpStatus,
+						"message": errMsg,
+						"data":    nil,
+					})
+				} else {
+					rpcResponse = []byte(respBody)
+				}
+
+				_, _ = insertWithdrawLog(r.QueueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, firstTxnID)
+
+				if d.ReplyTo != "" {
+					_ = ch.PublishWithContext(context.Background(),
+						"",
+						d.ReplyTo,
+						false,
+						false,
+						amqp.Publishing{
+							ContentType:   "application/json",
+							CorrelationId: d.CorrelationId,
+							Body:          rpcResponse,
+						})
+				}
+
+				d.Ack(false)
 			}
-			errMsg = message
-			status = "failed"
-
-			rpcResponse, _ = json.Marshal(map[string]interface{}{
-				"code":    400,
-				"message": message,
-				"data":    nil, // หรือจะใส่ empty struct/array ตาม requirement
-			})
-		} else if sendErr != nil || httpStatus >= 500 {
-			// กรณี server error
-			status = "failed"
-			if sendErr != nil {
-				errMsg = sendErr.Error()
-			}
-
-			rpcResponse, _ = json.Marshal(map[string]interface{}{
-				"code":    httpStatus,
-				"message": errMsg,
-				"data":    nil,
-			})
-		} else {
-			// กรณี success: ใช้ response ต้นทางเต็ม ๆ
-			rpcResponse = []byte(respBody)
-		}
-
-		// insert log
-		_, _ = insertWithdrawLog(r.QueueName, d.Body, headers, httpStatus, respBody, status, 1, errMsg, firstTxnID)
-
-		// ส่ง RPC response
-		if d.ReplyTo != "" {
-			_ = ch.PublishWithContext(context.Background(),
-				"",
-				d.ReplyTo,
-				false,
-				false,
-				amqp.Publishing{
-					ContentType:   "application/json",
-					CorrelationId: d.CorrelationId,
-					Body:          rpcResponse,
-				})
-		}
-
-		d.Ack(false)
+		}(i + 1)
 	}
+
+	// กัน main goroutine ออกจากโปรแกรม
+	select {}
 }
