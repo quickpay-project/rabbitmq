@@ -109,7 +109,7 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	}
 	req.Header.Set("Authorization", authHeader)
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Fatal(err)
@@ -174,7 +174,7 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 		log.Fatalf("❌ Consume error: %v", err)
 	}
 
-	workerCount := 3 // จำนวน worker ที่ทำงานพร้อมกัน
+	workerCount := 10 // จำนวน worker ที่ทำงานพร้อมกัน
 	log.Printf("[*] Waiting for RPC requests on queue: %s with %d workers", q.Name, workerCount)
 
 	for i := 0; i < workerCount; i++ {

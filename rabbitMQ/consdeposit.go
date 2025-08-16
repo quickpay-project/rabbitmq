@@ -144,7 +144,7 @@ func sendToExternalDepositAPI(data []byte, headers map[string]interface{}) (int,
 	}
 	req.Header.Set("Authorization", authHeader)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Fatal(err)
@@ -199,7 +199,7 @@ func (r *RabbitDepositMQ) ConsdepositRPC() {
 		log.Fatalf("❌ Queue declare error: %v", err)
 	}
 
-	workerCount := 10 // ✅ จำนวน worker ที่ process พร้อมกัน
+	workerCount := 30 // ✅ จำนวน worker ที่ process พร้อมกัน
 	if err := ch.Qos(workerCount, 0, false); err != nil {
 		log.Fatalf("❌ QoS set error: %v", err)
 	}
