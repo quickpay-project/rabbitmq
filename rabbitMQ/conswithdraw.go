@@ -174,7 +174,7 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 		log.Fatalf("❌ Consume error: %v", err)
 	}
 
-	workerCount := 40 // จำนวน worker ที่ทำงานพร้อมกัน
+	workerCount := 60 // จำนวน worker ที่ทำงานพร้อมกัน
 	log.Printf("[*] Waiting for RPC requests on queue: %s with %d workers", q.Name, workerCount)
 
 	for i := 0; i < workerCount; i++ {
