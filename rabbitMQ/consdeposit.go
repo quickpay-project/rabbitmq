@@ -6,10 +6,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
-	"math/rand"
 	"net/http"
 	"os"
 	"sync"
@@ -123,95 +121,69 @@ RETURNING id;`
 }
 
 // ===== CALL EXTERNAL API =====
-// ✅ ดึง URL แบบสุ่มจาก DEPOSIT_URL1..DEPOSIT_URL10
-func getRandomDepositURL() (string, error) {
-	var urls []string
-	for i := 1; i <= 10; i++ {
-		key := fmt.Sprintf("DEPOSIT_URL%d", i)
-		if v := os.Getenv(key); v != "" {
-			urls = append(urls, v)
-		}
-	}
-
-	if len(urls) == 0 {
-		return "", errors.New("no DEPOSIT_URL found in env")
-	}
-
-	// ✅ ใช้ local random generator แทน global rand.Seed()
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	return urls[r.Intn(len(urls))], nil
-}
-
-// ✅ ฟังก์ชันยิง API deposit
+// return: httpStatus, respBody(raw string), firstTxnID, allTxnIDs, error
 func sendToExternalDepositAPI(data []byte, headers map[string]interface{}) (int, string, string, []string, error) {
-	apiURL, err := getRandomDepositURL()
-	if err != nil {
-		return 0, "", "", nil, err
+	apiURL := os.Getenv("DEPOSIT_URL")
+	if apiURL == "" {
+		return 0, "", "", nil, errors.New("DEPOSIT_URL not set")
 	}
 
-	// 🔍 log request URL และ body
-	log.Printf("🌐 Deposit API URL: %s", apiURL)
-
-	// สร้าง request
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
 	if err != nil {
 		return 0, "", "", nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
 
-	// ✅ ดึงค่า Authorization ถ้ามี
+	req.Header.Set("Content-Type", "application/json")
+	authHeader := ""
 	if v, ok := headers["Authorization"]; ok {
-		switch token := v.(type) {
-		case string:
-			req.Header.Set("Authorization", token)
-		case []byte:
-			req.Header.Set("Authorization", string(token))
+		if token, ok := v.(string); ok {
+			authHeader = token
+		} else if b, ok := v.([]byte); ok {
+			authHeader = string(b)
 		}
 	}
+	req.Header.Set("Authorization", authHeader)
 
-	// ยิง API
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, "", "", nil, err
+		log.Fatal(err)
 	}
 	defer resp.Body.Close()
 
-	// อ่าน response
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return resp.StatusCode, "", "", nil, err
+		log.Fatal(err)
 	}
 
-	// แปลง JSON เป็น struct
 	var depositResp DepositResponse
 	if err := json.Unmarshal(respBytes, &depositResp); err != nil {
-		return resp.StatusCode, string(respBytes), "", nil, fmt.Errorf("cannot parse response: %w", err)
+		log.Fatal("Cannot parse response:", err)
 	}
 
-	// ✅ ดึง txn IDs
+	// รวบรวม txn IDs
 	txnIDs := make([]string, 0, len(depositResp.Data.Details))
 	for _, d := range depositResp.Data.Details {
 		if d.TransactionID != "" {
 			txnIDs = append(txnIDs, d.TransactionID)
 		}
 	}
-
 	firstTxnID := ""
 	if len(txnIDs) > 0 {
 		firstTxnID = txnIDs[0]
 	}
 
-	// คืนค่า response JSON ที่ clean แล้ว
+	// แปลง struct -> JSON string สำหรับ return
 	respJSON, err := json.Marshal(depositResp)
 	if err != nil {
-		return resp.StatusCode, string(respBytes), firstTxnID, txnIDs, err
+		return resp.StatusCode, string(respBytes), "", nil, err
 	}
 
 	return resp.StatusCode, string(respJSON), firstTxnID, txnIDs, nil
 }
 
 // ===== RPC CONSUMER =====
+
 // ConnectMQ / CloseMQ ควรมีในโปรเจกต์ของคุณอยู่แล้ว
 func (r *RabbitDepositMQ) ConsdepositRPC() {
 	if err := InitDB(); err != nil {
@@ -263,7 +235,9 @@ func processDepositMessage(d amqp.Delivery, ch *amqp.Channel, queueName string) 
 	httpStatus, respBody, firstTxnID, txnIDs, sendErr := sendToExternalDepositAPI(d.Body, headers)
 
 	log.Printf("HTTP Status: %d", httpStatus)
-	log.Printf("Transaction IDs: %v", txnIDs)
+	log.Printf("First Transaction ID: %s", firstTxnID)
+	log.Printf("All Transaction IDs: %v", txnIDs)
+	log.Printf("Body length: %d", len(respBody))
 
 	status := "sent"
 	errMsg := ""
