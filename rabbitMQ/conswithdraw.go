@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"time"
@@ -88,10 +89,37 @@ RETURNING id;`
 // ===== CALL EXTERNAL API =====
 // return: httpStatus, respBody(raw string), firstTxnID, allTxnIDs, error
 func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int, string, string, []string, error) {
-	apiURL := os.Getenv("WITHDRAW_URL")
-	if apiURL == "" {
-		return 0, "", "", nil, errors.New("WITHDRAW_URL not set")
+	urls := []string{
+		os.Getenv("WITHDRAW_URL1"),
+		os.Getenv("WITHDRAW_URL2"),
+		os.Getenv("WITHDRAW_URL3"),
+		os.Getenv("WITHDRAW_URL4"),
+		os.Getenv("WITHDRAW_URL5"),
+		os.Getenv("WITHDRAW_URL6"),
+		os.Getenv("WITHDRAW_URL7"),
+		os.Getenv("WITHDRAW_URL8"),
+		os.Getenv("WITHDRAW_URL9"),
+		os.Getenv("WITHDRAW_URL10"),
 	}
+
+	// กรองเฉพาะที่ไม่ว่าง
+	validURLs := make([]string, 0)
+	for _, u := range urls {
+		if u != "" {
+			validURLs = append(validURLs, u)
+		}
+	}
+
+	if len(validURLs) == 0 {
+		return 0, "", "", nil, errors.New("no WITHDRAW_URL available")
+	}
+
+	// ใช้ time-based random
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	idx := r.Intn(len(validURLs))
+	apiURL := validURLs[idx]
+
+	log.Printf("🌐 Withdraw API URL: %s", apiURL)
 
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
 	if err != nil {
@@ -112,18 +140,20 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("❌ Request failed: %v", err)
+		return 0, "", "", nil, err
 	}
 	defer resp.Body.Close()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatal(err)
+		return resp.StatusCode, "", "", nil, err
 	}
 
 	var withdrawResp WithdrawResponse
 	if err := json.Unmarshal(respBytes, &withdrawResp); err != nil {
-		log.Fatal("Cannot parse response:", err)
+		log.Printf("❌ Cannot parse response: %v", err)
+		return resp.StatusCode, string(respBytes), "", nil, err
 	}
 
 	// รวบรวม txn IDs
@@ -174,7 +204,7 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 		log.Fatalf("❌ Consume error: %v", err)
 	}
 
-	workerCount := 60 // จำนวน worker ที่ทำงานพร้อมกัน
+	workerCount := 80 // จำนวน worker ที่ทำงานพร้อมกัน
 	log.Printf("[*] Waiting for RPC requests on queue: %s with %d workers", q.Name, workerCount)
 
 	for i := 0; i < workerCount; i++ {
