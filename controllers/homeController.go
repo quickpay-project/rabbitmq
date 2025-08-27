@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strings"
 
 	rabbitmqconnect "github.com/celalsahinaltinisik/rabbitMQ"
 )
@@ -57,31 +56,6 @@ type DepositResponse struct {
 			WHTAmount       interface{} `json:"wht_amount"`
 		} `json:"details"`
 	} `json:"data"`
-}
-
-func isWhitelistedIP(r *http.Request) bool {
-	wl := os.Getenv("WISHLIST_IP")
-	if wl == "" {
-		return false
-	}
-
-	allowedIPs := strings.Split(wl, ",")
-
-	// หาค่า IP จาก Header หรือ RemoteAddr
-	ip := r.Header.Get("X-Forwarded-For")
-	if ip == "" {
-		ip = r.RemoteAddr
-		if strings.Contains(ip, ":") {
-			ip = strings.Split(ip, ":")[0]
-		}
-	}
-
-	for _, allow := range allowedIPs {
-		if strings.TrimSpace(allow) == ip {
-			return true
-		}
-	}
-	return false
 }
 
 func (m Functions) Home(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +116,7 @@ func (m Functions) Publish(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer ")
+	req.Header.Set("Authorization", "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwNjkxMjYwMTYsInVzZXJJZCI6ImRkMWNhOGNkLThkNjgtNDQzOC1hZDI4LWUxMDIwZWFhNTMwZCJ9.u-HXhWv_E1fH0gxLp_0zJix5ShzY6RkHYQqxITjJwgg")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -171,69 +145,6 @@ func (m Functions) Publish(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
-	// ✅ check IP ก่อน
-	if !isWhitelistedIP(r) {
-		http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
-		return
-	}
-
-	body, _ := io.ReadAll(r.Body)
-	headers := make(map[string]string)
-	for key, values := range r.Header {
-		if len(values) > 0 {
-			headers[key] = values[0]
-		}
-	}
-
-	rabbit := rabbitmqconnect.RabbitWithdrawMQ{
-		Body:      string(body),
-		QueueName: "withdraw",
-		Headers:   headers,
-	}
-
-	response, err := rabbit.WithdrawRPC()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusGatewayTimeout)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(response)
-}
-
-func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
-	// ✅ check IP ก่อน
-	if !isWhitelistedIP(r) {
-		http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
-		return
-	}
-
-	body, _ := io.ReadAll(r.Body)
-	headers := make(map[string]string)
-	for key, values := range r.Header {
-		if len(values) > 0 {
-			headers[key] = values[0]
-		}
-	}
-
-	rabbit := rabbitmqconnect.RabbitDepositMQ{
-		Body:      string(body),
-		QueueName: "deposit",
-		Headers:   headers,
-	}
-
-	response, err := rabbit.DepositRPC()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusGatewayTimeout)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(response)
-}
-
-/*
-func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 
 	headers := make(map[string]string)
@@ -284,4 +195,3 @@ func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(response)
 }
-*/
