@@ -137,7 +137,7 @@ func sendToExternalWithdrawAPI(data []byte, headers map[string]interface{}) (int
 	}
 	req.Header.Set("Authorization", authHeader)
 
-	client := &http.Client{Timeout: 120 * time.Second}
+	client := &http.Client{Timeout: 300 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("❌ Request failed: %v", err)

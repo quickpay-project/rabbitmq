@@ -170,7 +170,7 @@ func sendToExternalDepositAPI(data []byte, headers map[string]interface{}) (int,
 	}
 
 	// ยิง API
-	client := &http.Client{Timeout: 120 * time.Second}
+	client := &http.Client{Timeout: 300 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, "", "", nil, err
