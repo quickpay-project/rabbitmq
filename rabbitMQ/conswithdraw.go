@@ -10,7 +10,6 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
-	"strconv"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -205,14 +204,7 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 		log.Fatalf("❌ Consume error: %v", err)
 	}
 
-	workerCountStr := os.Getenv("WITHDRAW_LIMIT")
-	workerCount, err := strconv.Atoi(workerCountStr)
-	if err != nil {
-		log.Fatalf("❌ invalid WITHDRAW_LIMIT: %v", err)
-	}
-
-	log.Printf("[*] Waiting for RPC requests on queue: %s with %d workers", q.Name, workerCount)
-
+	workerCount := 150 // จำนวน worker ที่ทำงานพร้อมกัน
 	for i := 0; i < workerCount; i++ {
 		go func(workerID int) {
 			for d := range msgs {
