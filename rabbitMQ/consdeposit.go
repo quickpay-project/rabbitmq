@@ -12,6 +12,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -227,7 +228,12 @@ func (r *RabbitDepositMQ) ConsdepositRPC() {
 		log.Fatalf("❌ Queue declare error: %v", err)
 	}
 
-	workerCount := 120 // ✅ จำนวน worker ที่ process พร้อมกัน
+	workerCountStr := os.Getenv("DEPOSIT_LIMIT")
+	workerCount, err := strconv.Atoi(workerCountStr)
+	if err != nil {
+		log.Fatalf("❌ invalid DEPOSIT_LIMIT: %v", err)
+	}
+
 	if err := ch.Qos(workerCount, 0, false); err != nil {
 		log.Fatalf("❌ QoS set error: %v", err)
 	}
