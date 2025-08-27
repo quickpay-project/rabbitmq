@@ -204,7 +204,7 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 		log.Fatalf("❌ Consume error: %v", err)
 	}
 
-	workerCount := 150 // จำนวน worker ที่ทำงานพร้อมกัน
+	workerCount := 80 // จำนวน worker ที่ทำงานพร้อมกัน
 	for i := 0; i < workerCount; i++ {
 		go func(workerID int) {
 			for d := range msgs {

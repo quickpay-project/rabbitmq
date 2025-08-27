@@ -227,7 +227,7 @@ func (r *RabbitDepositMQ) ConsdepositRPC() {
 		log.Fatalf("❌ Queue declare error: %v", err)
 	}
 
-	workerCount := 300 // ✅ จำนวน worker ที่ process พร้อมกัน
+	workerCount := 120 // ✅ จำนวน worker ที่ process พร้อมกัน
 	if err := ch.Qos(workerCount, 0, false); err != nil {
 		log.Fatalf("❌ QoS set error: %v", err)
 	}
