@@ -67,16 +67,20 @@ func isWhitelistedIP(r *http.Request) bool {
 
 	allowedIPs := strings.Split(wl, ",")
 
-	// หาค่า IP จาก Header หรือ RemoteAddr
+	// ✅ ดึงค่า IP
 	ip := r.Header.Get("X-Forwarded-For")
-	log.Printf("🌐 IP: %s", ip)
-
-	if ip == "" {
+	if ip != "" {
+		// ตัดเอาเฉพาะตัวแรก
+		ip = strings.Split(ip, ",")[0]
+	} else {
 		ip = r.RemoteAddr
 		if strings.Contains(ip, ":") {
 			ip = strings.Split(ip, ":")[0]
 		}
 	}
+
+	ip = strings.TrimSpace(ip)
+	log.Printf("🌐 Client IP: %s", ip)
 
 	for _, allow := range allowedIPs {
 		if strings.TrimSpace(allow) == ip {
