@@ -69,6 +69,8 @@ func isWhitelistedIP(r *http.Request) bool {
 
 	// หาค่า IP จาก Header หรือ RemoteAddr
 	ip := r.Header.Get("X-Forwarded-For")
+	log.Printf("🌐 IP: %s", ip)
+
 	if ip == "" {
 		ip = r.RemoteAddr
 		if strings.Contains(ip, ":") {
