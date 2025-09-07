@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -124,53 +125,65 @@ RETURNING id;`
 }
 
 // ===== CALL EXTERNAL API =====
-// ✅ ดึง URL แบบสุ่มจาก DEPOSIT_URL1..DEPOSIT_URL10
-func getRandomDepositURL() (string, error) {
-	var urls []string
-	for i := 1; i <= 10; i++ {
-		key := fmt.Sprintf("DEPOSIT_URL%d", i)
-		if v := os.Getenv(key); v != "" {
-			urls = append(urls, v)
+// ✅ คืนค่า URL แบบสุ่มตาม Group จาก header
+func getRandomDepositURLByGroup(headers map[string]interface{}) (string, error) {
+	// ✅ ดึงค่า group จาก header
+	var group string
+	if v, ok := headers["Group"]; ok {
+		switch g := v.(type) {
+		case string:
+			group = g
+		case []byte:
+			group = string(g)
 		}
 	}
-
-	if len(urls) == 0 {
-		return "", errors.New("no DEPOSIT_URL found in env")
+	if group == "" {
+		return "", errors.New("missing Group header")
 	}
 
-	// ✅ ใช้ local random generator แทน global rand.Seed()
+	// ✅ สร้าง key env เช่น DEPOSIT_URL_GROUP1
+	envKey := "DEPOSIT_URL_GROUP" + group
+	envValue := os.Getenv(envKey)
+	if envValue == "" {
+		return "", fmt.Errorf("no URLs found for group %s", group)
+	}
+
+	// ✅ แยกเป็น slice
+	urls := strings.Split(envValue, ",")
+	if len(urls) == 0 {
+		return "", fmt.Errorf("no valid URLs in %s", envKey)
+	}
+
+	// ✅ random URL
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return urls[r.Intn(len(urls))], nil
 }
 
 // ✅ ฟังก์ชันยิง API deposit
 func sendToExternalDepositAPI(data []byte, headers map[string]interface{}) (int, string, string, []string, error) {
-	apiURL, err := getRandomDepositURL()
+	apiURL, err := getRandomDepositURLByGroup(headers)
 	if err != nil {
 		return 0, "", "", nil, err
 	}
 
-	// 🔍 log request URL และ body
-	log.Printf("🌐 Deposit API URL: %s", apiURL)
+	log.Printf("🌐 Deposit API URL (Group): %s", apiURL)
 
-	// สร้าง request
 	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
 	if err != nil {
 		return 0, "", "", nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	// ✅ ดึงค่า Authorization ถ้ามี
+	authHeader := ""
 	if v, ok := headers["Authorization"]; ok {
-		switch token := v.(type) {
-		case string:
-			req.Header.Set("Authorization", token)
-		case []byte:
-			req.Header.Set("Authorization", string(token))
+		if token, ok := v.(string); ok {
+			authHeader = token
+		} else if b, ok := v.([]byte); ok {
+			authHeader = string(b)
 		}
 	}
+	req.Header.Set("Authorization", authHeader)
 
-	// ยิง API
 	client := &http.Client{Timeout: 300 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -178,32 +191,27 @@ func sendToExternalDepositAPI(data []byte, headers map[string]interface{}) (int,
 	}
 	defer resp.Body.Close()
 
-	// อ่าน response
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return resp.StatusCode, "", "", nil, err
 	}
 
-	// แปลง JSON เป็น struct
 	var depositResp DepositResponse
 	if err := json.Unmarshal(respBytes, &depositResp); err != nil {
 		return resp.StatusCode, string(respBytes), "", nil, fmt.Errorf("cannot parse response: %w", err)
 	}
 
-	// ✅ ดึง txn IDs
 	txnIDs := make([]string, 0, len(depositResp.Data.Details))
 	for _, d := range depositResp.Data.Details {
 		if d.TransactionID != "" {
 			txnIDs = append(txnIDs, d.TransactionID)
 		}
 	}
-
 	firstTxnID := ""
 	if len(txnIDs) > 0 {
 		firstTxnID = txnIDs[0]
 	}
 
-	// คืนค่า response JSON ที่ clean แล้ว
 	respJSON, err := json.Marshal(depositResp)
 	if err != nil {
 		return resp.StatusCode, string(respBytes), firstTxnID, txnIDs, err

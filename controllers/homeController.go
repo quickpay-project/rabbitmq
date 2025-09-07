@@ -90,6 +90,35 @@ func isWhitelistedIP(r *http.Request) bool {
 	return false
 }
 
+// ✅ ฟังก์ชันตรวจสอบ group status
+func checkGroupAllowed(r *http.Request, envKey string) bool {
+	groupHeader := r.Header.Get("Group")
+	if groupHeader == "" {
+		return false
+	}
+
+	envValue := os.Getenv(envKey)
+	if envValue == "" {
+		return false
+	}
+
+	groupMap := make(map[string]string)
+	pairs := strings.Split(envValue, ",")
+	for _, pair := range pairs {
+		parts := strings.Split(pair, ":")
+		if len(parts) == 2 {
+			groupMap[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	}
+
+	status, ok := groupMap[groupHeader]
+	if !ok {
+		return false
+	}
+
+	return status == "1"
+}
+
 func (m Functions) Home(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "home")
 }
@@ -183,6 +212,12 @@ func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ✅ check group ก่อน
+	if !checkGroupAllowed(r, "WITHDRAW_GROUP_STATUS") {
+		http.Error(w, "Forbidden: Withdraw not allowed or closed", http.StatusForbidden)
+		return
+	}
+
 	body, _ := io.ReadAll(r.Body)
 	headers := make(map[string]string)
 	for key, values := range r.Header {
@@ -214,6 +249,12 @@ func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ✅ check group ก่อน
+	if !checkGroupAllowed(r, "DEPOSIT_GROUP_STATUS") {
+		http.Error(w, "Forbidden: Deposit not allowed or closed", http.StatusForbidden)
+		return
+	}
+
 	body, _ := io.ReadAll(r.Body)
 	headers := make(map[string]string)
 	for key, values := range r.Header {
@@ -237,57 +278,3 @@ func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(response)
 }
-
-/*
-func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(r.Body)
-
-	headers := make(map[string]string)
-	for key, values := range r.Header {
-		if len(values) > 0 {
-			headers[key] = values[0]
-		}
-	}
-
-	rabbit := rabbitmqconnect.RabbitWithdrawMQ{
-		Body:      string(body),
-		QueueName: "withdraw",
-		Headers:   headers,
-	}
-
-	response, err := rabbit.WithdrawRPC()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusGatewayTimeout)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(response)
-}
-
-func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(r.Body)
-
-	headers := make(map[string]string)
-	for key, values := range r.Header {
-		if len(values) > 0 {
-			headers[key] = values[0]
-		}
-	}
-
-	rabbit := rabbitmqconnect.RabbitDepositMQ{
-		Body:      string(body),
-		QueueName: "deposit",
-		Headers:   headers,
-	}
-
-	response, err := rabbit.DepositRPC()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusGatewayTimeout)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(response)
-}
-*/
