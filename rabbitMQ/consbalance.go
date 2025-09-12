@@ -55,6 +55,52 @@ RETURNING id;`
 
 // ===== ยิงไปทุก API =====
 func sendToAllBalanceAPIs(queueName string, originalBody []byte, headers map[string]interface{}, data []byte) {
+	// ✅ ยิงไป URL เดียว
+	urls := []string{
+		"https://botest-api.deepay.me/api/v1/merchant-keys/update-balance",
+	}
+
+	client := &http.Client{Timeout: 150 * time.Second}
+	var wg sync.WaitGroup
+
+	for _, apiURL := range urls {
+		if apiURL == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(url string) {
+			defer wg.Done()
+
+			req, _ := http.NewRequest("POST", url, bytes.NewBuffer(data))
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, err := client.Do(req)
+			if err != nil {
+				log.Printf("❌ Error sending to %s: %v", url, err)
+				_, _ = insertBalanceLog(queueName, originalBody, headers, 0, "", "failed", url, err.Error())
+				return
+			}
+			defer resp.Body.Close()
+
+			respBytes, _ := io.ReadAll(resp.Body)
+			log.Printf("✅ Sent to %s | Status: %d | Resp: %s", url, resp.StatusCode, string(respBytes))
+
+			status := "sent"
+			errMsg := ""
+			if resp.StatusCode >= 400 {
+				status = "failed"
+				errMsg = string(respBytes)
+			}
+
+			_, _ = insertBalanceLog(queueName, originalBody, headers, resp.StatusCode, string(respBytes), status, url, errMsg)
+		}(apiURL)
+	}
+
+	wg.Wait()
+}
+
+/*
+func sendToAllBalanceAPIs(queueName string, originalBody []byte, headers map[string]interface{}, data []byte) {
 	urls := []string{
 		os.Getenv("BALANCE_URL_GROUP1"),
 		os.Getenv("BALANCE_URL_GROUP2"),
@@ -99,6 +145,7 @@ func sendToAllBalanceAPIs(queueName string, originalBody []byte, headers map[str
 
 	wg.Wait()
 }
+*/
 
 // ===== RPC CONSUMER =====
 func (r *RabbitBalanceMQ) ConsbalanceRPC() {
