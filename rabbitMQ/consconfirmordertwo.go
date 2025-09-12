@@ -1,0 +1,177 @@
+package rabbitmqconnect
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"strconv"
+	"sync"
+	"time"
+
+	_ "github.com/lib/pq"
+	amqp "github.com/rabbitmq/amqp091-go"
+)
+
+// ===== INSERT LOG =====
+func insertConfirmordertwoLog(
+	queueName string,
+	body []byte,
+	headers map[string]interface{},
+	httpStatus int,
+	httpRespBody string,
+	statusStr string,
+	apiURL string,
+	errMsg string,
+) (int64, error) {
+
+	if db == nil {
+		return 0, errors.New("db not initialized")
+	}
+
+	headersJSON, _ := json.Marshal(headers)
+	var msgJSON json.RawMessage
+	if json.Valid(body) {
+		msgJSON = body
+	} else {
+		wrapped, _ := json.Marshal(map[string]string{"raw": string(body)})
+		msgJSON = wrapped
+	}
+
+	query := `
+INSERT INTO confirmordertwo_logs 
+(queue_name, message_body, headers, http_status, http_response_body, status, api_url, error_message, created_at, updated_at)
+VALUES ($1, $2::jsonb, $3::jsonb, $4, $5, $6, $7, $8, now(), now())
+RETURNING id;`
+
+	var id int64
+	err := db.QueryRow(query, queueName, msgJSON, headersJSON, httpStatus, httpRespBody, statusStr, apiURL, errMsg).Scan(&id)
+	return id, err
+}
+
+// ===== ยิงไปทุก API =====
+func sendToAllConfirmordertwoAPIs(queueName string, originalBody []byte, headers map[string]interface{}, data []byte) {
+	urls := []string{
+		os.Getenv("CONFIRMORDER_URL_GROUP2"),
+		//os.Getenv("CONFIRMORDER_URL_GROUP2"),
+		//os.Getenv("CONFIRMORDER_URL_GROUP3"),
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	var wg sync.WaitGroup
+
+	for _, apiURL := range urls {
+		if apiURL == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(url string) {
+			defer wg.Done()
+
+			req, _ := http.NewRequest("POST", url, bytes.NewBuffer(data))
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, err := client.Do(req)
+			if err != nil {
+				log.Printf("❌ Error sending to %s: %v", url, err)
+				_, _ = insertConfirmordertwoLog(queueName, originalBody, headers, 0, "", "failed", url, err.Error())
+				return
+			}
+			defer resp.Body.Close()
+
+			respBytes, _ := io.ReadAll(resp.Body)
+			log.Printf("✅ Sent to %s | Status: %d | Resp: %s", url, resp.StatusCode, string(respBytes))
+
+			status := "sent"
+			errMsg := ""
+			if resp.StatusCode >= 400 {
+				status = "failed"
+				errMsg = string(respBytes)
+			}
+
+			_, _ = insertConfirmordertwoLog(queueName, originalBody, headers, resp.StatusCode, string(respBytes), status, url, errMsg)
+		}(apiURL)
+	}
+
+	wg.Wait()
+}
+
+// ===== RPC CONSUMER =====
+func (r *RabbitConfirmordertwoMQ) ConsconfirmordertwoRPC() {
+	if err := InitDB(); err != nil {
+		log.Fatalf("❌ InitDB failed: %v", err)
+	}
+	defer db.Close()
+
+	conn, ch := ConnectMQ()
+	defer CloseMQ(conn, ch)
+
+	q, err := ch.QueueDeclare(r.QueueName, false, false, false, false, nil)
+	if err != nil {
+		log.Fatalf("❌ Queue declare error: %v", err)
+	}
+
+	workerCountStr := os.Getenv("CONFIRMORDER_LIMIT")
+	workerCount, err := strconv.Atoi(workerCountStr)
+	if err != nil {
+		log.Fatalf("❌ invalid CONFIRMORDER_LIMIT: %v", err)
+	}
+
+	if err := ch.Qos(workerCount, 0, false); err != nil {
+		log.Fatalf("❌ QoS set error: %v", err)
+	}
+
+	msgs, err := ch.Consume(q.Name, "", false, false, false, false, nil)
+	if err != nil {
+		log.Fatalf("❌ Consume error: %v", err)
+	}
+
+	log.Printf("[*] Waiting for RPC requests on queue: %s", q.Name)
+
+	var wg sync.WaitGroup
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for d := range msgs {
+				processConfirmordertwoMessage(d, ch, r.QueueName)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+}
+
+func processConfirmordertwoMessage(d amqp.Delivery, ch *amqp.Channel, queueName string) {
+	headers := map[string]interface{}{}
+	for k, v := range d.Headers {
+		headers[k] = v
+	}
+
+	// ✅ forward payload ตรง ๆ
+	sendToAllConfirmordertwoAPIs(queueName, d.Body, headers, d.Body)
+
+	// ✅ reply กลับไปยังต้นทาง (optional)
+	if d.ReplyTo != "" {
+		resp, _ := json.Marshal(map[string]interface{}{
+			"status":  200,
+			"message": "confirmorder 2 update requests sent",
+		})
+		_ = ch.PublishWithContext(context.Background(),
+			"",
+			d.ReplyTo,
+			false,
+			false,
+			amqp.Publishing{
+				ContentType:   "application/json",
+				CorrelationId: d.CorrelationId,
+				Body:          resp,
+			})
+	}
+
+	d.Ack(false)
+}

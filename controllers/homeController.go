@@ -1,8 +1,6 @@
 ﻿package controller
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -123,10 +121,34 @@ func (m Functions) Home(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "home")
 }
 
-func (m Functions) Consume(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "consume")
-	rabbit := rabbitmqconnect.RabbitMQ{QueueName: "defaultqueuue"}
-	rabbit.Consume()
+func (m Functions) On(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintln(w, "enable service mq")
+
+	// อ่าน Header
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	rabbit_withdraw := rabbitmqconnect.RabbitWithdrawMQ{QueueName: "withdraw", Headers: headers}
+	rabbit_withdraw.ConswithdrawRPC() // เปิดใช้งาน service withdraw
+
+	rabbit_deposit := rabbitmqconnect.RabbitDepositMQ{QueueName: "deposit", Headers: headers}
+	rabbit_deposit.ConsdepositRPC() // เปิดใช้งาน service deposit
+
+	rabbit_balance := rabbitmqconnect.RabbitBalanceMQ{QueueName: "balance", Headers: headers}
+	rabbit_balance.ConsbalanceRPC() // เปิดใช้งาน service balance
+
+	rabbit_confirmorder := rabbitmqconnect.RabbitConfirmorderMQ{QueueName: "confirmorder1", Headers: headers}
+	rabbit_confirmorder.ConsconfirmorderRPC() // เปิดใช้งาน service confirmorder 1
+
+	rabbit_confirmordertwo := rabbitmqconnect.RabbitConfirmordertwoMQ{QueueName: "confirmorder2", Headers: headers}
+	rabbit_confirmordertwo.ConsconfirmordertwoRPC() // เปิดใช้งาน service confirmorder 2
+
+	rabbit_confirmorderthree := rabbitmqconnect.RabbitConfirmorderthreeMQ{QueueName: "confirmorder3", Headers: headers}
+	rabbit_confirmorderthree.ConsconfirmorderthreeRPC() // เปิดใช้งาน service confirmorder 3
 }
 
 func (m Functions) Conswithdraw(w http.ResponseWriter, r *http.Request) {
@@ -159,8 +181,8 @@ func (m Functions) Consdeposit(w http.ResponseWriter, r *http.Request) {
 	rabbit.ConsdepositRPC() // ใช้ RPC consumer
 }
 
-func (m Functions) Publish(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(r.Body)
+func (m Functions) Consbalance(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintln(w, "Consume balance")
 
 	headers := make(map[string]string)
 	for key, values := range r.Header {
@@ -169,40 +191,50 @@ func (m Functions) Publish(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	apiURL := os.Getenv("WITHDRAW_URL")
+	rabbit := rabbitmqconnect.RabbitBalanceMQ{QueueName: "balance", Headers: headers}
+	rabbit.ConsbalanceRPC()
+}
 
-	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(body))
-	if err != nil {
-		log.Fatal(err)
+func (m Functions) Consconfirmorder(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintln(w, "Consume confirmorder")
+
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer ey")
+	rabbit := rabbitmqconnect.RabbitConfirmorderMQ{QueueName: "confirmorder1", Headers: headers}
+	rabbit.ConsconfirmorderRPC()
+}
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer resp.Body.Close()
+func (m Functions) Consconfirmordertwo(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintln(w, "Consume confirmorder 2")
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	var depositResp DepositResponse
-	if err := json.Unmarshal(respBytes, &depositResp); err != nil {
-		log.Fatal("Cannot parse response:", err)
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
 	}
 
-	// แสดงข้อมูล response
-	log.Printf("HTTP Status: %d", resp.StatusCode)
-	log.Printf("Message: %s", depositResp.Message)
-	if len(depositResp.Data.Details) > 0 {
-		log.Printf("Transaction ID: %s", depositResp.Data.Details[0].TransactionID)
-		log.Printf("QR String: %s", depositResp.Data.Details[0].QRString)
+	rabbit := rabbitmqconnect.RabbitConfirmordertwoMQ{QueueName: "confirmorder2", Headers: headers}
+	rabbit.ConsconfirmordertwoRPC()
+}
+
+func (m Functions) Consconfirmorderthree(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintln(w, "Consume confirmorder 2")
+
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
 	}
+
+	rabbit := rabbitmqconnect.RabbitConfirmorderthreeMQ{QueueName: "confirmorder3", Headers: headers}
+	rabbit.ConsconfirmorderthreeRPC()
 }
 
 func (m Functions) Withdraw(w http.ResponseWriter, r *http.Request) {
@@ -270,6 +302,130 @@ func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response, err := rabbit.DepositRPC()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusGatewayTimeout)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(response)
+}
+
+func (m Functions) Balance(w http.ResponseWriter, r *http.Request) {
+	// ✅ check IP ก่อน
+	if !isWhitelistedIP(r) {
+		http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
+		return
+	}
+
+	body, _ := io.ReadAll(r.Body)
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	rabbit := rabbitmqconnect.RabbitBalanceMQ{
+		Body:      string(body),
+		QueueName: "balance",
+		Headers:   headers,
+	}
+
+	response, err := rabbit.BalanceRPC()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusGatewayTimeout)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(response)
+}
+
+func (m Functions) Confirmorder(w http.ResponseWriter, r *http.Request) {
+	// ✅ check IP ก่อน
+	if !isWhitelistedIP(r) {
+		http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
+		return
+	}
+
+	body, _ := io.ReadAll(r.Body)
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	rabbit := rabbitmqconnect.RabbitConfirmorderMQ{
+		Body:      string(body),
+		QueueName: "confirmorder1",
+		Headers:   headers,
+	}
+
+	response, err := rabbit.ConfirmorderRPC()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusGatewayTimeout)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(response)
+}
+
+func (m Functions) Confirmordertwo(w http.ResponseWriter, r *http.Request) {
+	// ✅ check IP ก่อน
+	if !isWhitelistedIP(r) {
+		http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
+		return
+	}
+
+	body, _ := io.ReadAll(r.Body)
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	rabbit := rabbitmqconnect.RabbitConfirmordertwoMQ{
+		Body:      string(body),
+		QueueName: "confirmorder2",
+		Headers:   headers,
+	}
+
+	response, err := rabbit.ConfirmordertwoRPC()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusGatewayTimeout)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(response)
+}
+
+func (m Functions) Confirmorderthree(w http.ResponseWriter, r *http.Request) {
+	// ✅ check IP ก่อน
+	if !isWhitelistedIP(r) {
+		http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
+		return
+	}
+
+	body, _ := io.ReadAll(r.Body)
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	rabbit := rabbitmqconnect.RabbitConfirmorderthreeMQ{
+		Body:      string(body),
+		QueueName: "confirmorder3",
+		Headers:   headers,
+	}
+
+	response, err := rabbit.ConfirmorderthreeRPC()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusGatewayTimeout)
 		return
