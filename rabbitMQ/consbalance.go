@@ -55,52 +55,6 @@ RETURNING id;`
 
 // ===== ยิงไปทุก API =====
 func sendToAllBalanceAPIs(queueName string, originalBody []byte, headers map[string]interface{}, data []byte) {
-	// ✅ ยิงไป URL เดียว
-	urls := []string{
-		"https://botest-api.deepay.me/api/v1/merchant-keys/update-balance",
-	}
-
-	client := &http.Client{Timeout: 150 * time.Second}
-	var wg sync.WaitGroup
-
-	for _, apiURL := range urls {
-		if apiURL == "" {
-			continue
-		}
-		wg.Add(1)
-		go func(url string) {
-			defer wg.Done()
-
-			req, _ := http.NewRequest("POST", url, bytes.NewBuffer(data))
-			req.Header.Set("Content-Type", "application/json")
-
-			resp, err := client.Do(req)
-			if err != nil {
-				log.Printf("❌ Error sending to %s: %v", url, err)
-				_, _ = insertBalanceLog(queueName, originalBody, headers, 0, "", "failed", url, err.Error())
-				return
-			}
-			defer resp.Body.Close()
-
-			respBytes, _ := io.ReadAll(resp.Body)
-			log.Printf("✅ Sent to %s | Status: %d | Resp: %s", url, resp.StatusCode, string(respBytes))
-
-			status := "sent"
-			errMsg := ""
-			if resp.StatusCode >= 400 {
-				status = "failed"
-				errMsg = string(respBytes)
-			}
-
-			_, _ = insertBalanceLog(queueName, originalBody, headers, resp.StatusCode, string(respBytes), status, url, errMsg)
-		}(apiURL)
-	}
-
-	wg.Wait()
-}
-
-/*
-func sendToAllBalanceAPIs(queueName string, originalBody []byte, headers map[string]interface{}, data []byte) {
 	urls := []string{
 		os.Getenv("BALANCE_URL_GROUP1"),
 		os.Getenv("BALANCE_URL_GROUP2"),
@@ -130,13 +84,16 @@ func sendToAllBalanceAPIs(queueName string, originalBody []byte, headers map[str
 			defer resp.Body.Close()
 
 			respBytes, _ := io.ReadAll(resp.Body)
-			log.Printf("✅ Sent to %s | Status: %d | Resp: %s", url, resp.StatusCode, string(respBytes))
 
+			// ✅ Log ทุกกรณี success/fail
 			status := "sent"
 			errMsg := ""
 			if resp.StatusCode >= 400 {
 				status = "failed"
 				errMsg = string(respBytes)
+				log.Printf("❌ API Error %s | Status: %d | Resp: %s", url, resp.StatusCode, errMsg)
+			} else {
+				log.Printf("✅ Sent to %s | Status: %d | Resp: %s", url, resp.StatusCode, string(respBytes))
 			}
 
 			_, _ = insertBalanceLog(queueName, originalBody, headers, resp.StatusCode, string(respBytes), status, url, errMsg)
@@ -145,7 +102,42 @@ func sendToAllBalanceAPIs(queueName string, originalBody []byte, headers map[str
 
 	wg.Wait()
 }
-*/
+
+// ===== RPC Consumer =====
+func processBalanceMessage(d amqp.Delivery, ch *amqp.Channel, queueName string) {
+	headers := map[string]interface{}{}
+	for k, v := range d.Headers {
+		headers[k] = v
+	}
+
+	// ✅ Print payload และ headers จากต้นทาง
+	log.Printf("📥 Incoming Message from Queue [%s]: %s", queueName, string(d.Body))
+	log.Printf("📥 Headers: %+v", headers)
+
+	// ✅ forward payload ตรง ๆ และ log ทุก response
+	sendToAllBalanceAPIs(queueName, d.Body, headers, d.Body)
+
+	// ✅ reply กลับไปยังต้นทาง (optional)
+	if d.ReplyTo != "" {
+		resp, _ := json.Marshal(map[string]interface{}{
+			"status":  200,
+			"message": "balance update requests sent (check DB logs for details)",
+			"echo":    json.RawMessage(d.Body), // ✅ ส่ง payload กลับให้ดูด้วย
+		})
+		_ = ch.PublishWithContext(context.Background(),
+			"",
+			d.ReplyTo,
+			false,
+			false,
+			amqp.Publishing{
+				ContentType:   "application/json",
+				CorrelationId: d.CorrelationId,
+				Body:          resp,
+			})
+	}
+
+	d.Ack(false)
+}
 
 // ===== RPC CONSUMER =====
 func (r *RabbitBalanceMQ) ConsbalanceRPC() {
@@ -191,34 +183,4 @@ func (r *RabbitBalanceMQ) ConsbalanceRPC() {
 	}
 
 	wg.Wait()
-}
-
-func processBalanceMessage(d amqp.Delivery, ch *amqp.Channel, queueName string) {
-	headers := map[string]interface{}{}
-	for k, v := range d.Headers {
-		headers[k] = v
-	}
-
-	// ✅ forward payload ตรง ๆ
-	sendToAllBalanceAPIs(queueName, d.Body, headers, d.Body)
-
-	// ✅ reply กลับไปยังต้นทาง (optional)
-	if d.ReplyTo != "" {
-		resp, _ := json.Marshal(map[string]interface{}{
-			"status":  200,
-			"message": "balance update requests sent",
-		})
-		_ = ch.PublishWithContext(context.Background(),
-			"",
-			d.ReplyTo,
-			false,
-			false,
-			amqp.Publishing{
-				ContentType:   "application/json",
-				CorrelationId: d.CorrelationId,
-				Body:          resp,
-			})
-	}
-
-	d.Ack(false)
 }
