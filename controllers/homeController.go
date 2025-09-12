@@ -337,37 +337,6 @@ func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
 	w.Write(response)
 }
 
-func (m Functions) Merchantkeysupdatebalance(w http.ResponseWriter, r *http.Request) {
-	// ✅ check IP ก่อน
-	if !isWhitelistedIP(r) {
-		http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
-		return
-	}
-
-	body, _ := io.ReadAll(r.Body)
-	headers := make(map[string]string)
-	for key, values := range r.Header {
-		if len(values) > 0 {
-			headers[key] = values[0]
-		}
-	}
-
-	rabbit := rabbitmqconnect.RabbitBalanceMQ{
-		Body:      string(body),
-		QueueName: "balance",
-		Headers:   headers,
-	}
-
-	response, err := rabbit.BalanceRPC()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusGatewayTimeout)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(response)
-}
-
 func (m Functions) Confirmorder(w http.ResponseWriter, r *http.Request) {
 	// ✅ check IP ก่อน
 	if !isWhitelistedIP(r) {
@@ -459,4 +428,41 @@ func (m Functions) Confirmorderthree(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(response)
+}
+
+// ✅ เดิมมี Balance
+func (m Functions) Balance(w http.ResponseWriter, r *http.Request) {
+	if !isWhitelistedIP(r) {
+		http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
+		return
+	}
+
+	body, _ := io.ReadAll(r.Body)
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	rabbit := rabbitmqconnect.RabbitBalanceMQ{
+		Body:      string(body),
+		QueueName: "balance",
+		Headers:   headers,
+	}
+
+	response, err := rabbit.BalanceRPC()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusGatewayTimeout)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(response)
+}
+
+// ✅ ใหม่: /merchant-keys/update-balance
+func (m Functions) Merchantkeysupdatebalance(w http.ResponseWriter, r *http.Request) {
+	// ใช้โค้ดเดียวกับ Balance
+	m.Balance(w, r)
 }
