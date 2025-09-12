@@ -339,11 +339,12 @@ func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
 
 func (m Functions) Confirmorder(w http.ResponseWriter, r *http.Request) {
 	// ✅ check IP ก่อน
-	if !isWhitelistedIP(r) {
-		http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
-		return
-	}
-
+	/*
+		if !isWhitelistedIP(r) {
+			http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
+			return
+		}
+	*/
 	body, _ := io.ReadAll(r.Body)
 	headers := make(map[string]string)
 	for key, values := range r.Header {
@@ -370,11 +371,12 @@ func (m Functions) Confirmorder(w http.ResponseWriter, r *http.Request) {
 
 func (m Functions) Confirmordertwo(w http.ResponseWriter, r *http.Request) {
 	// ✅ check IP ก่อน
-	if !isWhitelistedIP(r) {
-		http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
-		return
-	}
-
+	/*
+		if !isWhitelistedIP(r) {
+			http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
+			return
+		}
+	*/
 	body, _ := io.ReadAll(r.Body)
 	headers := make(map[string]string)
 	for key, values := range r.Header {
@@ -401,11 +403,12 @@ func (m Functions) Confirmordertwo(w http.ResponseWriter, r *http.Request) {
 
 func (m Functions) Confirmorderthree(w http.ResponseWriter, r *http.Request) {
 	// ✅ check IP ก่อน
-	if !isWhitelistedIP(r) {
-		http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
-		return
-	}
-
+	/*
+		if !isWhitelistedIP(r) {
+			http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
+			return
+		}
+	*/
 	body, _ := io.ReadAll(r.Body)
 	headers := make(map[string]string)
 	for key, values := range r.Header {
@@ -435,11 +438,12 @@ func (m Functions) Confirmorderthree(w http.ResponseWriter, r *http.Request) {
 // =======================
 func (m Functions) MerchantKeysUpdateBalance(w http.ResponseWriter, r *http.Request) {
 	log.Println("💡 /merchant-keys/update-balance called")
-
-	if !isWhitelistedIP(r) {
-		http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
-		return
-	}
+	/*
+		if !isWhitelistedIP(r) {
+			http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
+			return
+		}
+	*/
 
 	body, _ := io.ReadAll(r.Body)
 	log.Println("📥 Body from client:", string(body))
