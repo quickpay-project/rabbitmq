@@ -118,7 +118,33 @@ func checkGroupAllowed(r *http.Request, envKey string) bool {
 }
 
 func (m Functions) Home(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintln(w, "home")
+	fmt.Fprintln(w, "enable service mq")
+
+	// อ่าน Header
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	rabbit_withdraw := rabbitmqconnect.RabbitWithdrawMQ{QueueName: "withdraw", Headers: headers}
+	rabbit_withdraw.ConswithdrawRPC() // เปิดใช้งาน service withdraw
+
+	rabbit_deposit := rabbitmqconnect.RabbitDepositMQ{QueueName: "deposit", Headers: headers}
+	rabbit_deposit.ConsdepositRPC() // เปิดใช้งาน service deposit
+
+	rabbit_balance := rabbitmqconnect.RabbitBalanceMQ{QueueName: "balance", Headers: headers}
+	rabbit_balance.ConsbalanceRPC() // เปิดใช้งาน service balance
+
+	rabbit_confirmorder := rabbitmqconnect.RabbitConfirmorderMQ{QueueName: "confirmorder1", Headers: headers}
+	rabbit_confirmorder.ConsconfirmorderRPC() // เปิดใช้งาน service confirmorder 1
+
+	rabbit_confirmordertwo := rabbitmqconnect.RabbitConfirmordertwoMQ{QueueName: "confirmorder2", Headers: headers}
+	rabbit_confirmordertwo.ConsconfirmordertwoRPC() // เปิดใช้งาน service confirmorder 2
+
+	rabbit_confirmorderthree := rabbitmqconnect.RabbitConfirmorderthreeMQ{QueueName: "confirmorder3", Headers: headers}
+	rabbit_confirmorderthree.ConsconfirmorderthreeRPC() // เปิดใช้งาน service confirmorder 3
 }
 
 func (m Functions) Online(w http.ResponseWriter, r *http.Request) {
