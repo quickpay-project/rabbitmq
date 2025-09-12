@@ -337,7 +337,7 @@ func (m Functions) Deposit(w http.ResponseWriter, r *http.Request) {
 	w.Write(response)
 }
 
-func (m Functions) Balance(w http.ResponseWriter, r *http.Request) {
+func (m Functions) Merchantkeysupdatebalance(w http.ResponseWriter, r *http.Request) {
 	// ✅ check IP ก่อน
 	if !isWhitelistedIP(r) {
 		http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
