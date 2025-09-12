@@ -431,15 +431,19 @@ func (m Functions) Confirmorderthree(w http.ResponseWriter, r *http.Request) {
 }
 
 // =======================
-// /balance
+// Handlers
 // =======================
-func (m Functions) Balance(w http.ResponseWriter, r *http.Request) {
+func (m Functions) MerchantKeysUpdateBalance(w http.ResponseWriter, r *http.Request) {
+	log.Println("💡 /merchant-keys/update-balance called")
+
 	if !isWhitelistedIP(r) {
 		http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
 		return
 	}
 
 	body, _ := io.ReadAll(r.Body)
+	log.Println("📥 Body from client:", string(body))
+
 	headers := make(map[string]string)
 	for key, values := range r.Header {
 		if len(values) > 0 {
@@ -455,6 +459,7 @@ func (m Functions) Balance(w http.ResponseWriter, r *http.Request) {
 
 	response, err := rabbit.BalanceRPC()
 	if err != nil {
+		log.Println("❌ Error sending to RabbitMQ:", err)
 		http.Error(w, err.Error(), http.StatusGatewayTimeout)
 		return
 	}
@@ -464,15 +469,14 @@ func (m Functions) Balance(w http.ResponseWriter, r *http.Request) {
 }
 
 // =======================
-// /merchant-keys/update-balance
+// Balance example
 // =======================
-func (m Functions) Merchantkeysupdatebalance(w http.ResponseWriter, r *http.Request) {
-	if !isWhitelistedIP(r) {
-		http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
-		return
-	}
+func (m Functions) Balance(w http.ResponseWriter, r *http.Request) {
+	log.Println("💡 /balance called")
 
 	body, _ := io.ReadAll(r.Body)
+	log.Println("📥 Body from client:", string(body))
+
 	headers := make(map[string]string)
 	for key, values := range r.Header {
 		if len(values) > 0 {
@@ -488,6 +492,7 @@ func (m Functions) Merchantkeysupdatebalance(w http.ResponseWriter, r *http.Requ
 
 	response, err := rabbit.BalanceRPC()
 	if err != nil {
+		log.Println("❌ Error sending to RabbitMQ:", err)
 		http.Error(w, err.Error(), http.StatusGatewayTimeout)
 		return
 	}
