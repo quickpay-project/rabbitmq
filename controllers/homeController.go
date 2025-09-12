@@ -121,7 +121,7 @@ func (m Functions) Home(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "home")
 }
 
-func (m Functions) On(w http.ResponseWriter, r *http.Request) {
+func (m Functions) Online(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "enable service mq")
 
 	// อ่าน Header
