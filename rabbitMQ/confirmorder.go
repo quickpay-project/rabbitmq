@@ -47,7 +47,7 @@ func (r *RabbitConfirmorderMQ) ConfirmorderRPC() ([]byte, error) {
 		headers[key] = value
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	err = ch.PublishWithContext(ctx,
@@ -66,7 +66,7 @@ func (r *RabbitConfirmorderMQ) ConfirmorderRPC() ([]byte, error) {
 		return nil, err
 	}
 
-	timeout := time.After(90 * time.Second)
+	timeout := time.After(10 * time.Second)
 	for {
 		select {
 		case msg := <-msgs:

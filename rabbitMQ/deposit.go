@@ -28,14 +28,18 @@ func (r *RabbitDepositMQ) DepositRPC() ([]byte, error) {
 	conn, ch := ConnectMQ()
 	defer CloseMQ(conn, ch)
 
-	replyQueue, err := ch.QueueDeclare(
-		"", false, true, true, false, nil,
-	)
-	if err != nil {
-		return nil, err
-	}
+	// ✅ ใช้ Direct Reply-To (ไม่ต้อง QueueDeclare)
+	replyQueue := "amq.rabbitmq.reply-to"
 
-	msgs, err := ch.Consume(replyQueue.Name, "", true, false, false, false, nil)
+	msgs, err := ch.Consume(
+		replyQueue,
+		"",
+		true,  // auto-ack
+		true,  // exclusive
+		false, // no-local
+		false, // no-wait
+		nil,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +51,8 @@ func (r *RabbitDepositMQ) DepositRPC() ([]byte, error) {
 		headers[key] = value
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	// ✅ Publish context รอได้นานขึ้นหน่อย
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	err = ch.PublishWithContext(ctx,
@@ -60,13 +65,15 @@ func (r *RabbitDepositMQ) DepositRPC() ([]byte, error) {
 			Body:          []byte(r.Body),
 			Headers:       headers,
 			CorrelationId: corrID,
-			ReplyTo:       replyQueue.Name,
+			ReplyTo:       replyQueue,
 		})
 	if err != nil {
 		return nil, err
 	}
 
-	timeout := time.After(90 * time.Second)
+	// ✅ ลด timeout ลงเพื่อให้เร็วขึ้น (เช่น 10s)
+	timeout := time.After(10 * time.Second)
+
 	for {
 		select {
 		case msg := <-msgs:
