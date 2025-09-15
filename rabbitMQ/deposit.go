@@ -52,7 +52,7 @@ func (r *RabbitDepositMQ) DepositRPC() ([]byte, error) {
 	}
 
 	// ✅ Publish context รอได้นานขึ้นหน่อย
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	err = ch.PublishWithContext(ctx,
@@ -72,7 +72,7 @@ func (r *RabbitDepositMQ) DepositRPC() ([]byte, error) {
 	}
 
 	// ✅ ลด timeout ลงเพื่อให้เร็วขึ้น (เช่น 10s)
-	timeout := time.After(10 * time.Second)
+	timeout := time.After(90 * time.Second)
 
 	for {
 		select {

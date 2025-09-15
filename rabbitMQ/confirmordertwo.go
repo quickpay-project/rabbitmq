@@ -66,7 +66,7 @@ func (r *RabbitConfirmordertwoMQ) ConfirmordertwoRPC() ([]byte, error) {
 		return nil, err
 	}
 
-	timeout := time.After(10 * time.Second)
+	timeout := time.After(90 * time.Second)
 	for {
 		select {
 		case msg := <-msgs:
