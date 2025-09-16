@@ -232,9 +232,9 @@ func (r *RabbitWithdrawMQ) ConswithdrawRPC() {
 				httpStatus, respBody, firstTxnID, txnIDs, sendErr := sendToExternalWithdrawAPI(d.Body, headers)
 
 				log.Printf("HTTP Status: %d", httpStatus)
-				log.Printf("First Transaction ID: %s", firstTxnID)
-				log.Printf("All Transaction IDs: %v", txnIDs)
-				log.Printf("Body length: %d", len(respBody))
+				log.Printf("Transaction ID: %s", firstTxnID)
+				log.Printf("Transaction IDs: %v", txnIDs)
+				//log.Printf("Body length: %d", len(respBody))
 
 				status := "sent"
 				errMsg := ""

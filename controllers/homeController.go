@@ -123,32 +123,6 @@ func (m Functions) Home(w http.ResponseWriter, r *http.Request) {
 
 func (m Functions) Online(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "enable service mq")
-
-	// อ่าน Header
-	headers := make(map[string]string)
-	for key, values := range r.Header {
-		if len(values) > 0 {
-			headers[key] = values[0]
-		}
-	}
-
-	rabbit_withdraw := rabbitmqconnect.RabbitWithdrawMQ{QueueName: "withdraw", Headers: headers}
-	rabbit_withdraw.ConswithdrawRPC() // เปิดใช้งาน service withdraw
-
-	rabbit_deposit := rabbitmqconnect.RabbitDepositMQ{QueueName: "deposit", Headers: headers}
-	rabbit_deposit.ConsdepositRPC() // เปิดใช้งาน service deposit
-
-	rabbit_balance := rabbitmqconnect.RabbitBalanceMQ{QueueName: "balance", Headers: headers}
-	rabbit_balance.ConsbalanceRPC() // เปิดใช้งาน service balance
-
-	rabbit_confirmorder := rabbitmqconnect.RabbitConfirmorderMQ{QueueName: "confirmorder1", Headers: headers}
-	rabbit_confirmorder.ConsconfirmorderRPC() // เปิดใช้งาน service confirmorder 1
-
-	rabbit_confirmordertwo := rabbitmqconnect.RabbitConfirmordertwoMQ{QueueName: "confirmorder2", Headers: headers}
-	rabbit_confirmordertwo.ConsconfirmordertwoRPC() // เปิดใช้งาน service confirmorder 2
-
-	rabbit_confirmorderthree := rabbitmqconnect.RabbitConfirmorderthreeMQ{QueueName: "confirmorder3", Headers: headers}
-	rabbit_confirmorderthree.ConsconfirmorderthreeRPC() // เปิดใช้งาน service confirmorder 3
 }
 
 func (m Functions) Conswithdraw(w http.ResponseWriter, r *http.Request) {
@@ -193,6 +167,20 @@ func (m Functions) Consbalance(w http.ResponseWriter, r *http.Request) {
 
 	rabbit := rabbitmqconnect.RabbitBalanceMQ{QueueName: "balance", Headers: headers}
 	rabbit.ConsbalanceRPC()
+}
+
+func (m Functions) Constransaction(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintln(w, "Consume transaction")
+
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	rabbit := rabbitmqconnect.RabbitTransactionMQ{QueueName: "transaction", Headers: headers}
+	rabbit.ConstransactionRPC()
 }
 
 func (m Functions) Consconfirmorder(w http.ResponseWriter, r *http.Request) {
@@ -407,17 +395,8 @@ func (m Functions) Confirmorderthree(w http.ResponseWriter, r *http.Request) {
 	w.Write(response)
 }
 
-// =======================
-// Handlers
-// =======================
 func (m Functions) MerchantKeysUpdateBalance(w http.ResponseWriter, r *http.Request) {
 	log.Println("💡 /merchant-keys/update-balance called")
-	/*
-		if !isWhitelistedIP(r) {
-			http.Error(w, "Forbidden: IP not allowed", http.StatusForbidden)
-			return
-		}
-	*/
 
 	body, _ := io.ReadAll(r.Body)
 	log.Println("📥 Body from client:", string(body))
@@ -446,9 +425,6 @@ func (m Functions) MerchantKeysUpdateBalance(w http.ResponseWriter, r *http.Requ
 	w.Write(response)
 }
 
-// =======================
-// Balance example
-// =======================
 func (m Functions) Balance(w http.ResponseWriter, r *http.Request) {
 	log.Println("💡 /balance called")
 
@@ -469,6 +445,66 @@ func (m Functions) Balance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response, err := rabbit.BalanceRPC()
+	if err != nil {
+		log.Println("❌ Error sending to RabbitMQ:", err)
+		http.Error(w, err.Error(), http.StatusGatewayTimeout)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(response)
+}
+
+func (m Functions) TransactionKtb(w http.ResponseWriter, r *http.Request) {
+	log.Println("💡 /transaction/ktb called")
+
+	body, _ := io.ReadAll(r.Body)
+	log.Println("📥 Body from client:", string(body))
+
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	rabbit := rabbitmqconnect.RabbitTransactionMQ{
+		Body:      string(body),
+		QueueName: "transaction",
+		Headers:   headers,
+	}
+
+	response, err := rabbit.TransactionRPC()
+	if err != nil {
+		log.Println("❌ Error sending to RabbitMQ:", err)
+		http.Error(w, err.Error(), http.StatusGatewayTimeout)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(response)
+}
+
+func (m Functions) Transaction(w http.ResponseWriter, r *http.Request) {
+	log.Println("💡 /transaction called")
+
+	body, _ := io.ReadAll(r.Body)
+	log.Println("📥 Body from client:", string(body))
+
+	headers := make(map[string]string)
+	for key, values := range r.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	rabbit := rabbitmqconnect.RabbitTransactionMQ{
+		Body:      string(body),
+		QueueName: "transaction",
+		Headers:   headers,
+	}
+
+	response, err := rabbit.TransactionRPC()
 	if err != nil {
 		log.Println("❌ Error sending to RabbitMQ:", err)
 		http.Error(w, err.Error(), http.StatusGatewayTimeout)

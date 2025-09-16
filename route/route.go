@@ -39,8 +39,9 @@ func Routeing() http.HandlerFunc {
 			"/home": "GET", "/online": "GET",
 			"/withdraw": "POST", "/deposit": "POST",
 			"/merchant-keys/update-balance": "POST",
+			"/transaction/ktb":              "POST",
 			"/confirmorder":                 "POST", "/confirmordertwo": "POST", "/confirmorderthree": "POST",
-			"/conswithdraw": "GET", "/consdeposit": "GET", "/consbalance": "GET",
+			"/conswithdraw": "GET", "/consdeposit": "GET", "/consbalance": "GET", "/constransaction": "GET",
 			"/consconfirmorder": "GET", "/consconfirmordertwo": "GET", "/consconfirmorderthree": "GET",
 		}
 
