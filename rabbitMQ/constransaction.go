@@ -61,7 +61,7 @@ func sendToAllTransactionAPIs(queueName string, originalBody []byte, headers map
 		os.Getenv("TRANSACTION_URL_GROUP3"),
 	}
 
-	client := &http.Client{Timeout: 150 * time.Second}
+	client := &http.Client{Timeout: 90 * time.Second}
 	var wg sync.WaitGroup
 
 	for _, apiURL := range urls {
