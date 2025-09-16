@@ -111,8 +111,8 @@ func processTransactionMessage(d amqp.Delivery, ch *amqp.Channel, queueName stri
 	}
 
 	// ✅ Print payload และ headers จากต้นทาง
-	log.Printf("📥 Incoming Message from Queue [%s]: %s", queueName, string(d.Body))
-	log.Printf("📥 Headers: %+v", headers)
+	//log.Printf("📥 Incoming Message from Queue [%s]: %s", queueName, string(d.Body))
+	//log.Printf("📥 Headers: %+v", headers)
 
 	// ✅ forward payload ตรง ๆ และ log ทุก response
 	sendToAllTransactionAPIs(queueName, d.Body, headers, d.Body)
