@@ -53,54 +53,41 @@ RETURNING id;`
 	return id, err
 }
 
-// ===== ยิงไปทุก API =====
+// ===== ยิงไป API TRANSACTION_URL_GROUP1 =====
 func sendToAllTransactionAPIs(queueName string, originalBody []byte, headers map[string]interface{}, data []byte) {
-	urls := []string{
-		os.Getenv("TRANSACTION_URL_GROUP1"),
-		os.Getenv("TRANSACTION_URL_GROUP2"),
-		os.Getenv("TRANSACTION_URL_GROUP3"),
+	apiURL := os.Getenv("TRANSACTION_URL_GROUP1")
+	if apiURL == "" {
+		log.Println("⚠️ TRANSACTION_URL_GROUP1 is empty, skip sending")
+		return
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
-	var wg sync.WaitGroup
 
-	for _, apiURL := range urls {
-		if apiURL == "" {
-			continue
-		}
-		wg.Add(1)
-		go func(url string) {
-			defer wg.Done()
+	req, _ := http.NewRequest("POST", apiURL, bytes.NewBuffer(data))
+	req.Header.Set("Content-Type", "application/json")
 
-			req, _ := http.NewRequest("POST", url, bytes.NewBuffer(data))
-			req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("❌ Error sending to %s: %v", apiURL, err)
+		_, _ = insertTransactionLog(queueName, originalBody, headers, 0, "", "failed", apiURL, err.Error())
+		return
+	}
+	defer resp.Body.Close()
 
-			resp, err := client.Do(req)
-			if err != nil {
-				log.Printf("❌ Error sending to %s: %v", url, err)
-				_, _ = insertTransactionLog(queueName, originalBody, headers, 0, "", "failed", url, err.Error())
-				return
-			}
-			defer resp.Body.Close()
+	respBytes, _ := io.ReadAll(resp.Body)
 
-			respBytes, _ := io.ReadAll(resp.Body)
-
-			// ✅ Log ทุกกรณี success/fail
-			status := "sent"
-			errMsg := ""
-			if resp.StatusCode >= 400 {
-				status = "failed"
-				errMsg = string(respBytes)
-				log.Printf("❌ API Error %s | Status: %d | Resp: %s", url, resp.StatusCode, errMsg)
-			} else {
-				log.Printf("✅ Sent to %s | Status: %d | Resp: %s", url, resp.StatusCode, string(respBytes))
-			}
-
-			_, _ = insertTransactionLog(queueName, originalBody, headers, resp.StatusCode, string(respBytes), status, url, errMsg)
-		}(apiURL)
+	// ✅ Log ทุกกรณี success/fail
+	status := "sent"
+	errMsg := ""
+	if resp.StatusCode >= 400 {
+		status = "failed"
+		errMsg = string(respBytes)
+		log.Printf("❌ API Error %s | Status: %d | Resp: %s", apiURL, resp.StatusCode, errMsg)
+	} else {
+		log.Printf("✅ Sent to %s | Status: %d | Resp: %s", apiURL, resp.StatusCode, string(respBytes))
 	}
 
-	wg.Wait()
+	_, _ = insertTransactionLog(queueName, originalBody, headers, resp.StatusCode, string(respBytes), status, apiURL, errMsg)
 }
 
 // ===== RPC Consumer =====
