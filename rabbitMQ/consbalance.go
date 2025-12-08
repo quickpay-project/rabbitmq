@@ -57,8 +57,8 @@ RETURNING id;`
 func sendToAllBalanceAPIs(queueName string, originalBody []byte, headers map[string]interface{}, data []byte) {
 	urls := []string{
 		os.Getenv("BALANCE_URL_GROUP1"),
-		os.Getenv("BALANCE_URL_GROUP2"),
-		os.Getenv("BALANCE_URL_GROUP3"),
+		/*os.Getenv("BALANCE_URL_GROUP2"),
+		os.Getenv("BALANCE_URL_GROUP3"),*/
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
